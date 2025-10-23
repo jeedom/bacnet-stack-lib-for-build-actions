@@ -23,7 +23,7 @@
 #define MAX_SCHEDULES 4
 #endif
 
-static SCHEDULE_DESCR Schedule_Descr[MAX_SCHEDULES];
+SCHEDULE_DESCR Schedule_Descr[MAX_SCHEDULES];
 
 static const int Schedule_Properties_Required[] = {
     /* list of required properties */
@@ -159,9 +159,21 @@ bool Schedule_Valid_Instance(uint32_t object_instance)
  */
 unsigned Schedule_Count(void)
 {
-    return MAX_SCHEDULES;
+    unsigned count = 0;
+    unsigned i;
+    SCHEDULE_DESCR empty_schedule;
+    
+    memset(&empty_schedule, 0, sizeof(SCHEDULE_DESCR));
+    
+    /* Compter seulement les Schedules qui ne sont pas entièrement vides */
+    for (i = 0; i < MAX_SCHEDULES; i++) {
+        if (memcmp(&Schedule_Descr[i], &empty_schedule, sizeof(SCHEDULE_DESCR)) != 0) {
+            count++;
+        }
+    }
+    
+    return count;
 }
-
 /**
  * @brief Determines the object instance number for a given index
  * @param  index - index number of the object
@@ -921,6 +933,34 @@ bool Schedule_Write_Property(BACNET_WRITE_PROPERTY_DATA *wp_data)
                     &value.type.Date_Range.enddate);
             }
             break;
+        case PROP_SCHEDULE_DEFAULT: {
+            /* Accepte REAL, UNSIGNED, SIGNED, ENUMERATED, BOOLEAN, etc. */
+            /* value est déjà décodé par bacapp_decode_known_array_property() */
+            SCHEDULE_DESCR *pdesc = &Schedule_Descr[object_index];
+            /* Copie directe vers Schedule_Default */
+            pdesc->Schedule_Default = value;
+            pdesc->Schedule_Default.context_specific = false;
+            status = true;
+            } 
+            break;
+        case PROP_PRIORITY_FOR_WRITING: {
+            bool ok = write_property_type_valid(
+                wp_data, &value, BACNET_APPLICATION_TAG_UNSIGNED_INT);
+            if (ok) {
+                uint32_t prio = value.type.Unsigned_Int;
+                if (prio >= 1 && prio <= 16) {
+                    Schedule_Descr[object_index].Priority_For_Writing = (uint8_t)prio;
+                    status = true;
+                } else {
+                    wp_data->error_class = ERROR_CLASS_PROPERTY;
+                    wp_data->error_code  = ERROR_CODE_VALUE_OUT_OF_RANGE;
+                }
+            } else {
+                wp_data->error_class = ERROR_CLASS_PROPERTY;
+                wp_data->error_code  = ERROR_CODE_INVALID_DATA_TYPE;
+            }
+        } 
+        break;
 #if BACNET_EXCEPTION_SCHEDULE_SIZE
         case PROP_EXCEPTION_SCHEDULE:
             wp_data->error_code = bacnet_array_write(
@@ -974,7 +1014,6 @@ bool Schedule_In_Effective_Period(
 
     return res;
 }
-
 /**
  * @brief Recalculate the Present Value of the Schedule object
  * @param desc - schedule descriptor
@@ -985,27 +1024,33 @@ void Schedule_Recalculate_PV(
     SCHEDULE_DESCR *desc, BACNET_WEEKDAY wday, const BACNET_TIME *time)
 {
     int i;
+    bool found = false;
+    
     desc->Present_Value.tag = BACNET_APPLICATION_TAG_NULL;
-
+    
     /* for future development, here should be the loop for Exception Schedule */
-
-    /*  Note to developers: please ping Edward at info@connect-ex.com
-        for a more complete schedule object implementation. */
-    for (i = 0; i < desc->Weekly_Schedule[wday - 1].TV_Count &&
-         desc->Present_Value.tag == BACNET_APPLICATION_TAG_NULL;
-         i++) {
+    /* Note to developers: please ping Edward at info@connect-ex.com
+       for a more complete schedule object implementation. */
+    
+    /* Parcourir TOUTES les time values pour trouver la DERNIÈRE avant l'heure actuelle */
+    for (i = 0; i < desc->Weekly_Schedule[wday - 1].TV_Count; i++) {
         int diff = datetime_wildcard_compare_time(
             time, &desc->Weekly_Schedule[wday - 1].Time_Values[i].Time);
+        
+        /* Si cette time value est avant ou égale à l'heure actuelle */
         if (diff >= 0 &&
             desc->Weekly_Schedule[wday - 1].Time_Values[i].Value.tag !=
                 BACNET_APPLICATION_TAG_NULL) {
+            /* Copier cette valeur (on continue pour trouver la dernière) */
             bacnet_primitive_to_application_data_value(
                 &desc->Present_Value,
                 &desc->Weekly_Schedule[wday - 1].Time_Values[i].Value);
+            found = true;
         }
     }
-
-    if (desc->Present_Value.tag == BACNET_APPLICATION_TAG_NULL) {
+    
+    /* Si aucune time value trouvée, utiliser default */
+    if (!found || desc->Present_Value.tag == BACNET_APPLICATION_TAG_NULL) {
         memcpy(
             &desc->Present_Value, &desc->Schedule_Default,
             sizeof(desc->Present_Value));
