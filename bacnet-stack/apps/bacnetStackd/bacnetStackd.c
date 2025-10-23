@@ -17,6 +17,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <time.h>
 
 #include <jansson.h>
 
@@ -29,6 +30,7 @@
 #include "bacnet/bacstr.h"
 #include "bacnet/wp.h"
 #include "bacnet/rp.h"
+#include "bacnet/datetime.h"
 #include "bacnet/basic/binding/address.h"
 #include "bacnet/basic/object/ai.h"
 #include "bacnet/basic/object/ao.h"
@@ -40,6 +42,7 @@
 #include "bacnet/basic/object/mso.h"
 #include "bacnet/basic/object/msv.h"
 #include "bacnet/basic/object/schedule.h"
+#include "schedule_override.h"
 #include "bacnet/basic/object/device.h"
 #include "bacnet/basic/services.h"
 #include "bacnet/datalink/datalink.h"
@@ -52,11 +55,33 @@
 #include "bacnet/basic/sys/mstimer.h"
 #include "bacnet/basic/tsm/tsm.h"
 
+extern SCHEDULE_DESCR Schedule_Descr[MAX_SCHEDULES];
+
 /* Prototype pour initialisation schedules */
 static void Init_Schedules(void);
 
 /* Prototype nécessaire pour save_current_config */
 static int save_current_config(void);
+
+static void Schedule_Init_Empty(void)
+{
+    printf("Schedule_Init_Empty: Schedules will be created from JSON only\n");
+    /* Ne rien faire - pas d'initialisation des Schedules */
+}
+
+static void print_timestamp_log(const char *message)
+{
+    time_t now;
+    struct tm *local_time;
+    char timestamp[64];
+    
+    time(&now);
+    local_time = localtime(&now);
+    
+    strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", local_time);
+    printf("[%s] %s\n", timestamp, message);
+    fflush(stdout);
+}
 
 /* Handler personnalisé pour WriteProperty : sauvegarde après chaque écriture */
 void my_handler_write_property(
@@ -72,6 +97,7 @@ void my_handler_write_property(
 /* Buffers */
 static uint8_t Rx_Buf[MAX_MPDU] = { 0 };
 static struct mstimer BACNET_Task_Timer;
+static struct mstimer Schedule_PV_Timer;
 static struct mstimer BACNET_TSM_Timer;
 static struct mstimer BACNET_Address_Timer;
 static struct mstimer Config_Save_Timer;
@@ -112,10 +138,6 @@ static bool set_object_name(BACNET_OBJECT_TYPE obj_type, uint32_t instance, cons
             break;
         case OBJECT_MULTI_STATE_VALUE:
             status = Multistate_Value_Name_Set(instance, name);
-            break;
-        case OBJECT_SCHEDULE:
-            /* Schedule_Name_Set n'existe pas dans cette version */
-            status = false;
             break;
         default:
             break;
@@ -312,7 +334,7 @@ static object_functions_t My_Object_Table[] = {
 
     /* Schedule - utilise l'implémentation standard de la librairie */
     { OBJECT_SCHEDULE,
-      Schedule_Init,
+      Schedule_Init_Empty,
       Schedule_Count,
       Schedule_Index_To_Instance,
       Schedule_Valid_Instance,
@@ -333,6 +355,126 @@ static object_functions_t My_Object_Table[] = {
 
 /* Déclaration forward */
 static int apply_config_from_json(const char *json_text);
+
+/* AJOUT: Fonction pour supprimer tous les objets d'un type donné */
+static void delete_all_objects_of_type(BACNET_OBJECT_TYPE obj_type)
+{
+    unsigned count, i;
+    uint32_t instance;
+    
+    switch (obj_type) {
+        case OBJECT_ANALOG_INPUT:
+            count = Analog_Input_Count();
+            if (count > 0) printf("Deleting %u Analog Input(s)...\n", count);
+            for (i = count; i > 0; i--) {
+                instance = Analog_Input_Index_To_Instance(i - 1);
+                if (Analog_Input_Delete(instance)) {
+                    printf("  Deleted AI #%u\n", instance);
+                }
+            }
+            break;
+        case OBJECT_ANALOG_OUTPUT:
+            count = Analog_Output_Count();
+            if (count > 0) printf("Deleting %u Analog Output(s)...\n", count);
+            for (i = count; i > 0; i--) {
+                instance = Analog_Output_Index_To_Instance(i - 1);
+                if (Analog_Output_Delete(instance)) {
+                    printf("  Deleted AO #%u\n", instance);
+                }
+            }
+            break;
+        case OBJECT_ANALOG_VALUE:
+            count = Analog_Value_Count();
+            if (count > 0) printf("Deleting %u Analog Value(s)...\n", count);
+            for (i = count; i > 0; i--) {
+                instance = Analog_Value_Index_To_Instance(i - 1);
+                if (Analog_Value_Delete(instance)) {
+                    printf("  Deleted AV #%u\n", instance);
+                }
+            }
+            break;
+        case OBJECT_BINARY_INPUT:
+            count = Binary_Input_Count();
+            if (count > 0) printf("Deleting %u Binary Input(s)...\n", count);
+            for (i = count; i > 0; i--) {
+                instance = Binary_Input_Index_To_Instance(i - 1);
+                if (Binary_Input_Delete(instance)) {
+                    printf("  Deleted BI #%u\n", instance);
+                }
+            }
+            break;
+        case OBJECT_BINARY_OUTPUT:
+            count = Binary_Output_Count();
+            if (count > 0) printf("Deleting %u Binary Output(s)...\n", count);
+            for (i = count; i > 0; i--) {
+                instance = Binary_Output_Index_To_Instance(i - 1);
+                if (Binary_Output_Delete(instance)) {
+                    printf("  Deleted BO #%u\n", instance);
+                }
+            }
+            break;
+        case OBJECT_BINARY_VALUE:
+            count = Binary_Value_Count();
+            if (count > 0) printf("Deleting %u Binary Value(s)...\n", count);
+            for (i = count; i > 0; i--) {
+                instance = Binary_Value_Index_To_Instance(i - 1);
+                if (Binary_Value_Delete(instance)) {
+                    printf("  Deleted BV #%u\n", instance);
+                }
+            }
+            break;
+        case OBJECT_MULTI_STATE_INPUT:
+            count = Multistate_Input_Count();
+            if (count > 0) printf("Deleting %u Multi-State Input(s)...\n", count);
+            for (i = count; i > 0; i--) {
+                instance = Multistate_Input_Index_To_Instance(i - 1);
+                if (Multistate_Input_Delete(instance)) {
+                    printf("  Deleted MSI #%u\n", instance);
+                }
+            }
+            break;
+        case OBJECT_MULTI_STATE_OUTPUT:
+            count = Multistate_Output_Count();
+            if (count > 0) printf("Deleting %u Multi-State Output(s)...\n", count);
+            for (i = count; i > 0; i--) {
+                instance = Multistate_Output_Index_To_Instance(i - 1);
+                if (Multistate_Output_Delete(instance)) {
+                    printf("  Deleted MSO #%u\n", instance);
+                }
+            }
+            break;
+        case OBJECT_MULTI_STATE_VALUE:
+            count = Multistate_Value_Count();
+            if (count > 0) printf("Deleting %u Multi-State Value(s)...\n", count);
+            for (i = count; i > 0; i--) {
+                instance = Multistate_Value_Index_To_Instance(i - 1);
+                if (Multistate_Value_Delete(instance)) {
+                    printf("  Deleted MSV #%u\n", instance);
+                }
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+static void delete_all_objects(void)
+{
+    printf("=== Clearing all existing objects before applying new configuration ===\n");
+    delete_all_objects_of_type(OBJECT_ANALOG_INPUT);
+    delete_all_objects_of_type(OBJECT_ANALOG_OUTPUT);
+    delete_all_objects_of_type(OBJECT_ANALOG_VALUE);
+    delete_all_objects_of_type(OBJECT_BINARY_INPUT);
+    delete_all_objects_of_type(OBJECT_BINARY_OUTPUT);
+    delete_all_objects_of_type(OBJECT_BINARY_VALUE);
+    delete_all_objects_of_type(OBJECT_MULTI_STATE_INPUT);
+    delete_all_objects_of_type(OBJECT_MULTI_STATE_OUTPUT);
+    delete_all_objects_of_type(OBJECT_MULTI_STATE_VALUE);
+
+    printf("Schedules not auto-initialized - will be created from JSON if present\n");
+
+    printf("=== All objects cleared ===\n");
+}
 
 /* ===== Initialisation des Schedules ===== */
 static void Init_Schedules(void)
@@ -655,6 +797,10 @@ static int save_current_config(void)
         bool has_name;
         json_t *weekly_array;
         unsigned day_idx;
+        BACNET_APPLICATION_DATA_VALUE default_val;
+        BACNET_READ_PROPERTY_DATA rpdata;
+        uint8_t apdu[MAX_APDU];
+        int apdu_len;
         
         inst = Schedule_Index_To_Instance(i);
         obj = json_object();
@@ -671,12 +817,7 @@ static int save_current_config(void)
             }
         }
         
-        /* Default Value - utilise Read_Property */
-        BACNET_APPLICATION_DATA_VALUE default_val;
-        BACNET_READ_PROPERTY_DATA rpdata;
-        uint8_t apdu[MAX_APDU];
-        int apdu_len;
-        
+        /* Default Value - ENUMERATED EN PREMIER pour les booléens */
         memset(&default_val, 0, sizeof(default_val));
         memset(&rpdata, 0, sizeof(rpdata));
         
@@ -694,7 +835,10 @@ static int save_current_config(void)
                                                 (uint8_t)rpdata.application_data_len, 
                                                 &default_val);
             if (len > 0) {
-                if (default_val.tag == BACNET_APPLICATION_TAG_REAL) {
+                /* IMPORTANT: Vérifier ENUMERATED EN PREMIER pour les booléens */
+                if (default_val.tag == BACNET_APPLICATION_TAG_ENUMERATED) {
+                    json_object_set_new(obj, "defaultValue", json_integer(default_val.type.Enumerated));
+                } else if (default_val.tag == BACNET_APPLICATION_TAG_REAL) {
                     json_object_set_new(obj, "defaultValue", json_real(default_val.type.Real));
                 } else if (default_val.tag == BACNET_APPLICATION_TAG_UNSIGNED_INT) {
                     json_object_set_new(obj, "defaultValue", json_integer(default_val.type.Unsigned_Int));
@@ -727,17 +871,16 @@ static int save_current_config(void)
             }
         }
         
-        /* Weekly Schedule */
+        /* Weekly Schedule - avec gestion correcte des booléens */
         weekly_array = json_array();
         for (day_idx = 0; day_idx < 7; day_idx++) {
             json_t *day_array = json_array();
             
-            /* Lire le schedule du jour via Read_Property */
             memset(&rpdata, 0, sizeof(rpdata));
             rpdata.object_type = OBJECT_SCHEDULE;
             rpdata.object_instance = inst;
             rpdata.object_property = PROP_WEEKLY_SCHEDULE;
-            rpdata.array_index = day_idx + 1;  /* BACnet array index starts at 1 */
+            rpdata.array_index = day_idx + 1;
             rpdata.application_data = &apdu[0];
             rpdata.application_data_len = sizeof(apdu);
             
@@ -747,22 +890,18 @@ static int save_current_config(void)
                 int total_len = 0;
                 uint8_t *apdu_ptr = rpdata.application_data;
                 
-                /* Decode opening tag for DailySchedule */
                 if (decode_is_opening_tag_number(apdu_ptr, 0)) {
                     total_len++;
                     apdu_ptr++;
                     
-                    /* Decode each TimeValue pair */
                     while (total_len < apdu_len) {
                         BACNET_APPLICATION_DATA_VALUE time_val;
                         BACNET_APPLICATION_DATA_VALUE value_val;
                         
-                        /* Check for closing tag */
                         if (decode_is_closing_tag_number(apdu_ptr, 0)) {
                             break;
                         }
                         
-                        /* Decode Time */
                         decode_len = bacapp_decode_application_data(apdu_ptr, 
                                                                    apdu_len - total_len, 
                                                                    &time_val);
@@ -770,7 +909,6 @@ static int save_current_config(void)
                         total_len += decode_len;
                         apdu_ptr += decode_len;
                         
-                        /* Decode Value */
                         decode_len = bacapp_decode_application_data(apdu_ptr, 
                                                                    apdu_len - total_len, 
                                                                    &value_val);
@@ -778,7 +916,6 @@ static int save_current_config(void)
                         total_len += decode_len;
                         apdu_ptr += decode_len;
                         
-                        /* Create JSON time-value pair */
                         if (time_val.tag == BACNET_APPLICATION_TAG_TIME) {
                             json_t *time_value_obj = json_object();
                             char time_str[16];
@@ -788,8 +925,11 @@ static int save_current_config(void)
                                     time_val.type.Time.min);
                             json_object_set_new(time_value_obj, "time", json_string(time_str));
                             
-                            /* Add value */
-                            if (value_val.tag == BACNET_APPLICATION_TAG_REAL) {
+                            /* ENUMERATED en premier pour les booléens */
+                            if (value_val.tag == BACNET_APPLICATION_TAG_ENUMERATED) {
+                                json_object_set_new(time_value_obj, "value", 
+                                                  json_integer(value_val.type.Enumerated));
+                            } else if (value_val.tag == BACNET_APPLICATION_TAG_REAL) {
                                 json_object_set_new(time_value_obj, "value", 
                                                   json_real(value_val.type.Real));
                             } else if (value_val.tag == BACNET_APPLICATION_TAG_UNSIGNED_INT) {
@@ -812,6 +952,7 @@ static int save_current_config(void)
         
         json_array_append_new(objects_array, obj);
     }
+
     
     json_object_set_new(root, "objects", objects_array);
     
@@ -874,6 +1015,9 @@ static int apply_config_from_json(const char *json_text)
         fprintf(stderr, "CFGJSON: parse error at %d:%d: %s\n", jerr.line, jerr.column, jerr.text);
         return -1;
     }
+
+    /* MODIFICATION: Supprimer tous les objets existants avant d'appliquer la nouvelle configuration */
+    delete_all_objects();
 
     /* Device */
     if (json_is_integer(json_object_get(root, "deviceId"))) {
@@ -1128,12 +1272,18 @@ static int apply_config_from_json(const char *json_text)
                 Multistate_Value_Present_Value_Set(inst, (uint32_t)json_integer_value(jpv));
             }
         }
-        else if (strcmp(typ, "schedule") == 0) {
+/* ============================================
+ * SECTION SCHEDULE dans apply_config_from_json()
+ * REMPLACEZ tout le bloc "else if (strcmp(typ, "schedule") == 0)"
+ * ============================================ */
+
+     else if (strcmp(typ, "schedule") == 0) {
             bool exists;
             size_t day_idx;
             json_t *weekly_schedule;
             json_t *default_value;
             json_t *priority;
+            double val;
             
             exists = Schedule_Valid_Instance(inst);
             if (!exists) {
@@ -1148,6 +1298,92 @@ static int apply_config_from_json(const char *json_text)
                 printf("  Schedule name: '%s' (names must be set via BACnet WriteProperty)\n", name);
             }
             
+            /* Configuration de defaultValue - MAINTENANT POSSIBLE ! */
+            default_value = json_object_get(it, "defaultValue");
+            if (json_is_number(default_value)) {
+                BACNET_APPLICATION_DATA_VALUE app_value;
+                BACNET_WRITE_PROPERTY_DATA wp_data;
+                uint8_t apdu[MAX_APDU];
+                int apdu_len;
+                
+                memset(&app_value, 0, sizeof(app_value));
+                memset(&wp_data, 0, sizeof(wp_data));
+                
+                val = json_number_value(default_value);
+                
+                /* Détecter si c'est un booléen (0 ou 1) */
+                if ((val == 0.0 || val == 1.0) && json_is_integer(default_value)) {
+                    app_value.tag = BACNET_APPLICATION_TAG_ENUMERATED;
+                    app_value.type.Enumerated = (uint32_t)val;
+                    printf("  Setting default value: %u (BOOLEAN/ENUMERATED)\n", app_value.type.Enumerated);
+                } else if (json_is_real(default_value)) {
+                    app_value.tag = BACNET_APPLICATION_TAG_REAL;
+                    app_value.type.Real = (float)val;
+                    printf("  Setting default value: %f (REAL)\n", app_value.type.Real);
+                } else {
+                    app_value.tag = BACNET_APPLICATION_TAG_UNSIGNED_INT;
+                    app_value.type.Unsigned_Int = (uint32_t)val;
+                    printf("  Setting default value: %lu (UNSIGNED)\n", (unsigned long)app_value.type.Unsigned_Int);
+                }
+                
+                apdu_len = bacapp_encode_application_data(&apdu[0], &app_value);
+                
+                wp_data.object_type = OBJECT_SCHEDULE;
+                wp_data.object_instance = inst;
+                wp_data.object_property = PROP_SCHEDULE_DEFAULT;
+                wp_data.array_index = BACNET_ARRAY_ALL;
+                wp_data.application_data_len = apdu_len;
+                memcpy(wp_data.application_data, &apdu[0], apdu_len);
+                wp_data.priority = BACNET_NO_PRIORITY;
+                wp_data.error_code = ERROR_CODE_SUCCESS;
+                
+                apdu_len = Schedule_Write_Property(&wp_data);
+                if (apdu_len > 0 && wp_data.error_code == ERROR_CODE_SUCCESS) {
+                    printf("  Default value set successfully\n");
+                } else {
+                    printf("  Failed to set default value (error: %d)\n", wp_data.error_code);
+                }
+            }
+            
+            /* Configuration de priority - MAINTENANT POSSIBLE ! */
+            priority = json_object_get(it, "priority");
+            if (json_is_integer(priority)) {
+                BACNET_APPLICATION_DATA_VALUE app_value;
+                BACNET_WRITE_PROPERTY_DATA wp_data;
+                uint8_t apdu[MAX_APDU];
+                int apdu_len;
+                uint8_t prio;
+                
+                prio = (uint8_t)json_integer_value(priority);
+                
+                if (prio > 0 && prio <= 16) {
+                    memset(&app_value, 0, sizeof(app_value));
+                    memset(&wp_data, 0, sizeof(wp_data));
+                    
+                    app_value.tag = BACNET_APPLICATION_TAG_UNSIGNED_INT;
+                    app_value.type.Unsigned_Int = prio;
+                    
+                    apdu_len = bacapp_encode_application_data(&apdu[0], &app_value);
+                    
+                    wp_data.object_type = OBJECT_SCHEDULE;
+                    wp_data.object_instance = inst;
+                    wp_data.object_property = PROP_PRIORITY_FOR_WRITING;
+                    wp_data.array_index = BACNET_ARRAY_ALL;
+                    wp_data.application_data_len = apdu_len;
+                    memcpy(wp_data.application_data, &apdu[0], apdu_len);
+                    wp_data.priority = BACNET_NO_PRIORITY;
+                    wp_data.error_code = ERROR_CODE_SUCCESS;
+                    
+                    apdu_len = Schedule_Write_Property(&wp_data);
+                    if (apdu_len > 0 && wp_data.error_code == ERROR_CODE_SUCCESS) {
+                        printf("  Priority set to: %u\n", prio);
+                    } else {
+                        printf("  Failed to set priority (error: %d)\n", wp_data.error_code);
+                    }
+                }
+            }
+            
+            /* Configuration du weekly schedule */
             weekly_schedule = json_object_get(it, "weeklySchedule");
             if (json_is_array(weekly_schedule)) {
                 printf("  Configuring weekly schedule...\n");
@@ -1174,12 +1410,18 @@ static int apply_config_from_json(const char *json_text)
                                     daily.Time_Values[time_idx].Time.sec = 0;
                                     daily.Time_Values[time_idx].Time.hundredths = 0;
                                     
-                                    if (json_is_real(jvalue)) {
+                                    /* Détecter le type de valeur */
+                                    val = json_number_value(jvalue);
+                                    if ((val == 0.0 || val == 1.0) && json_is_integer(jvalue)) {
+                                        /* Valeur booléenne: utiliser ENUMERATED */
+                                        daily.Time_Values[time_idx].Value.tag = BACNET_APPLICATION_TAG_ENUMERATED;
+                                        daily.Time_Values[time_idx].Value.type.Enumerated = (uint32_t)val;
+                                    } else if (json_is_real(jvalue)) {
                                         daily.Time_Values[time_idx].Value.tag = BACNET_APPLICATION_TAG_REAL;
-                                        daily.Time_Values[time_idx].Value.type.Real = (float)json_real_value(jvalue);
+                                        daily.Time_Values[time_idx].Value.type.Real = (float)val;
                                     } else if (json_is_integer(jvalue)) {
                                         daily.Time_Values[time_idx].Value.tag = BACNET_APPLICATION_TAG_UNSIGNED_INT;
-                                        daily.Time_Values[time_idx].Value.type.Unsigned_Int = (uint32_t)json_integer_value(jvalue);
+                                        daily.Time_Values[time_idx].Value.type.Unsigned_Int = (uint32_t)val;
                                     }
                                     
                                     daily.TV_Count++;
@@ -1200,20 +1442,66 @@ static int apply_config_from_json(const char *json_text)
                 }
             }
             
-            default_value = json_object_get(it, "defaultValue");
-            if (json_is_number(default_value)) {
-                printf("  Default value: %f (configure via BACnet WriteProperty PROP_SCHEDULE_DEFAULT)\n", 
-                       json_number_value(default_value));
-            }
-            
-            priority = json_object_get(it, "priority");
-            if (json_is_integer(priority)) {
-                printf("  Priority: %d (configure via BACnet WriteProperty PROP_PRIORITY_FOR_WRITING)\n", 
-                       (int)json_integer_value(priority));
-            }
-            
             printf("  Schedule %u configuration complete\n", inst);
+          {
+                SCHEDULE_DESCR *desc = Schedule_Object(inst);
+                if (desc) {
+                    /* FORCER une période "toujours active" car 2155 = invalide/futur */
+                    desc->Start_Date.year = 1900;
+                    desc->Start_Date.month = 1;
+                    desc->Start_Date.day = 1;
+                    desc->Start_Date.wday = BACNET_WEEKDAY_MONDAY;
+                    
+                    desc->End_Date.year = 2154;
+                    desc->End_Date.month = 12;
+                    desc->End_Date.day = 31;
+                    desc->End_Date.wday = BACNET_WEEKDAY_SUNDAY;
+                    
+                    printf("  Effective period FORCED: always active (1900-2154)\n");
+                    printf("  Effective period FORCED: always active (1900-2154)\n");
+                    
+                    /* Forcer le premier calcul du Present_Value avec l'heure RÉELLE */
+                    {
+                        BACNET_TIME time_of_day;
+                        BACNET_WEEKDAY wday;
+                        time_t now;
+                        struct tm *lt;
+                        
+                        /* Obtenir l'heure SYSTÈME directement */
+                        now = time(NULL);
+                        lt = localtime(&now);
+                        
+                        /* Remplir time_of_day avec l'heure réelle */
+                        time_of_day.hour = (uint8_t)lt->tm_hour;
+                        time_of_day.min = (uint8_t)lt->tm_min;
+                        time_of_day.sec = (uint8_t)lt->tm_sec;
+                        time_of_day.hundredths = 0;
+                        
+                        /* Calculer le jour de la semaine */
+                        if (lt->tm_wday == 0) {
+                            wday = (BACNET_WEEKDAY)7;  /* Dimanche */
+                        } else {
+                            wday = (BACNET_WEEKDAY)lt->tm_wday;  /* Lundi=1...Samedi=6 */
+                        }
+                        
+                        /* Calculer le Present_Value */
+                        Schedule_Recalculate_PV(desc, wday, &time_of_day);
+                        
+                        /* Afficher le résultat */
+                        if (desc->Present_Value.tag == BACNET_APPLICATION_TAG_ENUMERATED) {
+                            printf("  Initial PV: %u (ENUM) at %02u:%02u wday=%u\n",
+                                   desc->Present_Value.type.Enumerated,
+                                   time_of_day.hour, time_of_day.min, wday);
+                        } else if (desc->Present_Value.tag == BACNET_APPLICATION_TAG_REAL) {
+                            printf("  Initial PV: %.1f (REAL) at %02u:%02u wday=%u\n",
+                                   desc->Present_Value.type.Real,
+                                   time_of_day.hour, time_of_day.min, wday);
+                        }
+                    }
+                }
+            }
         }
+
     }
 
     json_decref(root);
@@ -1426,6 +1714,7 @@ static void Init_Service_Handlers(void)
     apdu_set_confirmed_handler(SERVICE_CONFIRMED_DEVICE_COMMUNICATION_CONTROL, handler_device_communication_control);
 
     mstimer_set(&BACNET_Task_Timer, 1000UL);
+    mstimer_set(&Schedule_PV_Timer, 60UL * 1000UL);
     mstimer_set(&BACNET_TSM_Timer, 50UL);
     mstimer_set(&BACNET_Address_Timer, 60UL * 1000UL);
     mstimer_set(&Config_Save_Timer, 30UL * 1000UL);
@@ -1443,6 +1732,20 @@ static void print_usage(const char *filename)
     printf("  --config PATH:   Fichier de configuration JSON pour persistance\n");
 }
 
+static void clear_all_schedules(void)
+{
+    unsigned int i;
+    
+    printf("Clearing all %d Schedules...\n", MAX_SCHEDULES);
+    printf("  Before clear: Schedule_Count() = %u\n", Schedule_Count());
+    
+    for (i = 0; i < MAX_SCHEDULES; i++) {
+        memset(&Schedule_Descr[i], 0, sizeof(SCHEDULE_DESCR));
+    }
+    
+    printf("  After clear: Schedule_Count() = %u\n", Schedule_Count());
+    printf("All Schedules cleared\n");
+}
 /* ===== MAIN ===== */
 int main(int argc, char *argv[])
 {
@@ -1453,7 +1756,7 @@ int main(int argc, char *argv[])
     uint32_t device_instance = 260001;
     const char *envp;
     int argi = 1;
-
+    char buf[256];
     printf("BACnet Stack Server (Jeedom)\n");
     printf("Version: %s\n", BACNET_VERSION_TEXT);
 
@@ -1489,15 +1792,17 @@ int main(int argc, char *argv[])
         g_socket_port = atoi(envp);
     }
 
-    Device_Set_Object_Instance_Number(device_instance);
-    printf("Device ID: %u\n", device_instance);
+    Device_Set_Object_Instance_Number(device_instance);  
+    snprintf(buf, sizeof(buf), "Device ID: %u", device_instance);
+    print_timestamp_log(buf);
 
     dlenv_init();
     Init_Service_Handlers();
     atexit(datalink_cleanup);
 
     Device_Object_Name_ANSI_Init(device_name);
-    printf("Device Name: %s\n", device_name);
+    snprintf(buf, sizeof(buf), "Device Name: %s", device_name);
+    print_timestamp_log(buf);
 
     g_listen_fd = socket_listen_local(g_socket_port);
     if (g_listen_fd >= 0) {
@@ -1512,6 +1817,9 @@ int main(int argc, char *argv[])
     signal(SIGTERM, sig_handler);
 
     if (g_config_file[0]) {
+        /* Vider les 10 Schedules créés par défaut au démarrage */
+        clear_all_schedules();
+        
         load_config_from_file();
     }
 
@@ -1542,6 +1850,51 @@ int main(int argc, char *argv[])
                 save_current_config();
             }
         }
+
+/* Mise à jour minute des PRESENT_VALUE des Schedule */
+/* Mise à jour minute des PRESENT_VALUE des Schedule */
+if (mstimer_expired(&Schedule_PV_Timer)) {
+    BACNET_TIME time_of_day;
+    BACNET_WEEKDAY wday;
+    unsigned sc_count;
+    unsigned i;
+    time_t now;
+    struct tm *lt;
+
+    mstimer_reset(&Schedule_PV_Timer);
+
+    /* Obtenir l'heure SYSTÈME directement (datetime_local ne fonctionne pas) */
+    now = time(NULL);
+    lt = localtime(&now);
+    
+    /* Remplir time_of_day avec l'heure réelle */
+    time_of_day.hour = (uint8_t)lt->tm_hour;
+    time_of_day.min = (uint8_t)lt->tm_min;
+    time_of_day.sec = (uint8_t)lt->tm_sec;
+    time_of_day.hundredths = 0;
+    
+    /* Calculer le jour de la semaine */
+    if (lt->tm_wday == 0) {
+        wday = (BACNET_WEEKDAY)7;  /* Dimanche */
+    } else {
+        wday = (BACNET_WEEKDAY)lt->tm_wday;  /* Lundi=1...Samedi=6 */
+    }
+
+    /* Recalcule Present_Value pour tous les schedules */
+    sc_count = Schedule_Count();
+    for (i = 0; i < sc_count; i++) {
+        uint32_t inst = Schedule_Index_To_Instance(i);
+        SCHEDULE_DESCR *desc = Schedule_Object(inst);
+        if (desc) {
+            Schedule_Recalculate_PV(desc, wday, &time_of_day);
+        }
+    }
+}
+
+
+
+
+
 
         process_socket_io();
     }
