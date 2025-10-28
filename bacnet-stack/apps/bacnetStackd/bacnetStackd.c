@@ -42,6 +42,7 @@
 #include "bacnet/basic/object/mso.h"
 #include "bacnet/basic/object/msv.h"
 #include "bacnet/basic/object/schedule.h"
+#include "bacnet/basic/object/trendlog.h"
 #include "schedule_override.h"
 #include "bacnet/basic/object/device.h"
 #include "bacnet/basic/services.h"
@@ -54,7 +55,6 @@
 #include "bacnet/version.h"
 #include "bacnet/basic/sys/mstimer.h"
 #include "bacnet/basic/tsm/tsm.h"
-#include "trendlog_manager.h"
 
 extern SCHEDULE_DESCR Schedule_Descr[MAX_SCHEDULES];
 
@@ -102,8 +102,6 @@ static struct mstimer Schedule_PV_Timer;
 static struct mstimer BACNET_TSM_Timer;
 static struct mstimer BACNET_Address_Timer;
 static struct mstimer Config_Save_Timer;
-static pthread_t trendlog_thread;
-static bool trendlog_thread_running = false;
 
 /* Helper function to set object name */
 static bool set_object_name(BACNET_OBJECT_TYPE obj_type, uint32_t instance, const char *name)
@@ -150,6 +148,35 @@ static bool set_object_name(BACNET_OBJECT_TYPE obj_type, uint32_t instance, cons
     return status;
 }
 
+
+static bool create_trendlog(uint32_t instance, const char *name, 
+                           BACNET_OBJECT_TYPE source_type, 
+                           uint32_t source_instance,
+                           uint32_t log_interval,
+                           uint32_t buffer_size,
+                           bool enable)
+{
+
+    if (!Trend_Log_Object_Instance_Add(instance)) {
+        fprintf(stderr, "Failed to create Trendlog instance %u\n", instance);
+        return false;
+    }
+    
+
+    if (name && *name) {
+        BACNET_CHARACTER_STRING char_string;
+        characterstring_init_ansi(&char_string, name);
+
+    }
+    
+    printf("Trendlog %u created: %s\n", instance, name ? name : "");
+    printf("  Linked to: Type=%d Instance=%u\n", source_type, source_instance);
+    printf("  Interval: %u seconds, Buffer: %u records\n", log_interval, buffer_size);
+    
+    return true;
+}
+
+
 /* Socket control */
 static int g_socket_port = 55031;
 static int g_listen_fd = -1;
@@ -165,256 +192,6 @@ static void sig_handler(int sig) {
     printf("Signal %d received, shutting down...\n", sig);
     fflush(stdout);
     g_shutdown = 1;
-}
-
-
-/* ===== Trendlog Thread ===== */
-static void *trendlog_periodic_thread(void *arg)
-{
-    (void)arg;
-    printf("[TrendLog] Thread périodique démarré\n");
-    
-    while (trendlog_thread_running) {
-        TrendLog_Process_Periodic();
-        sleep(1);  // Vérifie chaque seconde
-    }
-    
-    printf("[TrendLog] Thread périodique arrêté\n");
-    return NULL;
-}
-
-static void start_trendlog_thread(void)
-{
-    if (!trendlog_thread_running) {
-        trendlog_thread_running = true;
-        if (pthread_create(&trendlog_thread, NULL, trendlog_periodic_thread, NULL) != 0) {
-            fprintf(stderr, "[TrendLog] Erreur lors de la création du thread\n");
-            trendlog_thread_running = false;
-        }
-    }
-}
-
-static void stop_trendlog_thread(void)
-{
-    if (trendlog_thread_running) {
-        trendlog_thread_running = false;
-        pthread_join(trendlog_thread, NULL);
-    }
-}
-
-static void cleanup_trendlogs_on_exit(void)
-{
-    printf("\n[TrendLog] Arrêt et nettoyage...\n");
-    stop_trendlog_thread();
-    
-    /* Export optionnel avant arrêt */
-    unsigned count = TrendLog_Count();
-    for (unsigned i = 0; i < count; i++) {
-        uint32_t instance = TrendLog_Index_To_Instance(i);
-        char filename[256];
-        snprintf(filename, sizeof(filename), 
-                 "/tmp/trendlog_%u_shutdown.csv", instance);
-        TrendLog_Export_CSV(instance, filename);
-    }
-    
-    TrendLog_Clear_All();
-    printf("[TrendLog] Nettoyage terminé\n");
-}
-
-/* ===== Trendlog Command Handler ===== */
-static char *handle_trendlog_command(json_t *root)
-{
-    json_t *response = json_object();
-    const char *command = json_string_value(json_object_get(root, "command"));
-    
-    if (!command) {
-        json_object_set_new(response, "status", json_string("error"));
-        json_object_set_new(response, "message", json_string("Commande manquante"));
-        goto end;
-    }
-    
-    /* Commande: trendlog_load_config */
-    if (strcmp(command, "trendlog_load_config") == 0) {
-        json_t *config_item = json_object_get(root, "config");
-        if (!config_item || !json_is_string(config_item)) {
-            json_object_set_new(response, "status", json_string("error"));
-            json_object_set_new(response, "message", json_string("Config JSON manquante"));
-            goto end;
-        }
-        
-        const char *config_json = json_string_value(config_item);
-        if (TrendLog_Load_Config(config_json)) {
-            json_object_set_new(response, "status", json_string("success"));
-            json_object_set_new(response, "message", json_string("Configuration chargée"));
-        } else {
-            json_object_set_new(response, "status", json_string("error"));
-            json_object_set_new(response, "message", json_string("Erreur de chargement"));
-        }
-    }
-    
-    /* Commande: trendlog_get_data */
-    else if (strcmp(command, "trendlog_get_data") == 0) {
-        json_t *instance_item = json_object_get(root, "instance");
-        if (!instance_item || !json_is_integer(instance_item)) {
-            json_object_set_new(response, "status", json_string("error"));
-            json_object_set_new(response, "message", json_string("Instance manquante"));
-            goto end;
-        }
-        
-        uint32_t instance = (uint32_t)json_integer_value(instance_item);
-        uint32_t record_count = TrendLog_Get_Record_Count(instance);
-        
-        json_t *data = json_object();
-        json_object_set_new(data, "instance", json_integer(instance));
-        json_object_set_new(data, "record_count", json_integer(record_count));
-        
-        json_t *records = json_array();
-        for (uint32_t i = 0; i < record_count; i++) {
-            TRENDLOG_RECORD record;
-            if (TrendLog_Get_Record(instance, i, &record)) {
-                json_t *rec = json_object();
-                
-                char timestamp[32];
-                snprintf(timestamp, sizeof(timestamp), "%04d-%02d-%02d %02d:%02d:%02d",
-                        record.timestamp.date.year,
-                        record.timestamp.date.month,
-                        record.timestamp.date.day,
-                        record.timestamp.time.hour,
-                        record.timestamp.time.min,
-                        record.timestamp.time.sec);
-                
-                json_object_set_new(rec, "timestamp", json_string(timestamp));
-                json_object_set_new(rec, "value", json_real(record.value));
-                json_object_set_new(rec, "status_flags", json_integer(record.status_flags));
-                
-                json_array_append_new(records, rec);
-            }
-        }
-        
-        json_object_set_new(data, "records", records);
-        json_object_set_new(response, "data", data);
-        json_object_set_new(response, "status", json_string("success"));
-    }
-    
-    /* Commande: trendlog_export_csv */
-    else if (strcmp(command, "trendlog_export_csv") == 0) {
-        json_t *instance_item = json_object_get(root, "instance");
-        json_t *filepath_item = json_object_get(root, "filepath");
-        
-        if (!instance_item || !filepath_item) {
-            json_object_set_new(response, "status", json_string("error"));
-            json_object_set_new(response, "message", json_string("Paramètres manquants"));
-            goto end;
-        }
-        
-        uint32_t instance = (uint32_t)json_integer_value(instance_item);
-        const char *filepath = json_string_value(filepath_item);
-        
-        if (TrendLog_Export_CSV(instance, filepath)) {
-            json_object_set_new(response, "status", json_string("success"));
-            json_object_set_new(response, "message", json_string("Export réussi"));
-        } else {
-            json_object_set_new(response, "status", json_string("error"));
-            json_object_set_new(response, "message", json_string("Erreur d'export"));
-        }
-    }
-    
-    /* Commande: trendlog_clear_buffer */
-    else if (strcmp(command, "trendlog_clear_buffer") == 0) {
-        json_t *instance_item = json_object_get(root, "instance");
-        if (!instance_item) {
-            json_object_set_new(response, "status", json_string("error"));
-            json_object_set_new(response, "message", json_string("Instance manquante"));
-            goto end;
-        }
-        
-        uint32_t instance = (uint32_t)json_integer_value(instance_item);
-        TrendLog_Clear_Buffer(instance);
-        
-        json_object_set_new(response, "status", json_string("success"));
-        json_object_set_new(response, "message", json_string("Buffer vidé"));
-    }
-    
-    /* Commande: trendlog_set_enable */
-    else if (strcmp(command, "trendlog_set_enable") == 0) {
-        json_t *instance_item = json_object_get(root, "instance");
-        json_t *enable_item = json_object_get(root, "enable");
-        
-        if (!instance_item || !enable_item) {
-            json_object_set_new(response, "status", json_string("error"));
-            json_object_set_new(response, "message", json_string("Paramètres manquants"));
-            goto end;
-        }
-        
-        uint32_t instance = (uint32_t)json_integer_value(instance_item);
-        bool enable = json_is_true(enable_item);
-        
-        TrendLog_Set_Enable(instance, enable);
-        
-        json_object_set_new(response, "status", json_string("success"));
-        json_object_set_new(response, "message", json_string(enable ? "Activé" : "Désactivé"));
-    }
-    
-    /* Commande: trendlog_record_value */
-    else if (strcmp(command, "trendlog_record_value") == 0) {
-        json_t *instance_item = json_object_get(root, "instance");
-        json_t *value_item = json_object_get(root, "value");
-        json_t *status_item = json_object_get(root, "status_flags");
-        
-        if (!instance_item || !value_item) {
-            json_object_set_new(response, "status", json_string("error"));
-            json_object_set_new(response, "message", json_string("Paramètres manquants"));
-            goto end;
-        }
-        
-        uint32_t instance = (uint32_t)json_integer_value(instance_item);
-        float value = (float)json_real_value(value_item);
-        uint8_t status_flags = status_item ? (uint8_t)json_integer_value(status_item) : 0;
-        
-        if (TrendLog_Record_Value(instance, value, status_flags)) {
-            json_object_set_new(response, "status", json_string("success"));
-        } else {
-            json_object_set_new(response, "status", json_string("error"));
-            json_object_set_new(response, "message", json_string("Erreur d'enregistrement"));
-        }
-    }
-    
-    /* Commande: trendlog_process_cov */
-    else if (strcmp(command, "trendlog_process_cov") == 0) {
-        json_t *type_item = json_object_get(root, "object_type");
-        json_t *instance_item = json_object_get(root, "object_instance");
-        json_t *value_item = json_object_get(root, "value");
-        
-        if (!type_item || !instance_item || !value_item) {
-            json_object_set_new(response, "status", json_string("error"));
-            json_object_set_new(response, "message", json_string("Paramètres manquants"));
-            goto end;
-        }
-        
-        BACNET_OBJECT_TYPE object_type = (BACNET_OBJECT_TYPE)json_integer_value(type_item);
-        uint32_t object_instance = (uint32_t)json_integer_value(instance_item);
-        float value = (float)json_real_value(value_item);
-        
-        TrendLog_Process_COV(object_type, object_instance, value);
-        
-        json_object_set_new(response, "status", json_string("success"));
-    }
-    
-    /* Commande: trendlog_get_status */
-    else if (strcmp(command, "trendlog_get_status") == 0) {
-        TrendLog_Print_Status();
-        json_object_set_new(response, "status", json_string("success"));
-    }
-    
-    else {
-        json_object_set_new(response, "status", json_string("error"));
-        json_object_set_new(response, "message", json_string("Commande Trendlog inconnue"));
-    }
-    
-end:
-    char *response_str = json_dumps(response, JSON_COMPACT);
-    json_decref(response);
-    return response_str;
 }
 
 /* Custom Object Table */
@@ -599,6 +376,24 @@ static object_functions_t My_Object_Table[] = {
       NULL,
       NULL,
       NULL },
+
+       { OBJECT_TRENDLOG,
+      Trend_Log_Init,
+      Trend_Log_Count,
+      Trend_Log_Index_To_Instance,
+      Trend_Log_Valid_Instance,
+      Trend_Log_Object_Name,
+      Trend_Log_Read_Property,
+      Trend_Log_Write_Property,
+      Trend_Log_Property_Lists,
+      TrendLogGetRRInfo,
+      NULL, NULL,
+      rr_trend_log_encode,
+      NULL, NULL, NULL, NULL,
+      NULL,  /* Create - on va le faire nous-mêmes */
+      NULL,  /* Delete - on va le faire nous-mêmes */
+      NULL },
+
 
     /* Terminator */
     { MAX_BACNET_OBJECT_TYPE,
@@ -1536,256 +1331,319 @@ static int apply_config_from_json(const char *json_text)
                 Multistate_Value_Present_Value_Set(inst, (uint32_t)json_integer_value(jpv));
             }
         }
-/* ============================================
- * SECTION SCHEDULE dans apply_config_from_json()
- * REMPLACEZ tout le bloc "else if (strcmp(typ, "schedule") == 0)"
- * ============================================ */
-
-else if (strcmp(typ, "schedule") == 0) {
-    bool exists;
-    size_t day_idx;
-    json_t *weekly_schedule;
-    json_t *default_value;
-    json_t *priority;
-    double val;
-    
-    exists = Schedule_Valid_Instance(inst);
-    if (!exists) {
-        printf("Schedule %u does not exist. MAX_SCHEDULES may be too low or instance out of range.\n", inst);
-        printf("  Schedules available: 0 to %u\n", Schedule_Count() > 0 ? Schedule_Count() - 1 : 0);
-        continue;
-    }
-    
-    printf("Configuring Schedule %u\n", inst);
-    
-    if (name) {
-        char *name_copy = strdup(name);
-        if (name_copy) {
-            set_object_name(OBJECT_SCHEDULE, inst, name_copy);
-            printf("  Schedule name: '%s'\n", name);
-        }
-    }
-    
-    /* ======== MODIFICATION: Support des BOOLEAN true/false ======== */
-    /* Configuration de defaultValue avec support BOOLEAN */
-    default_value = json_object_get(it, "defaultValue");
-    if (default_value && !json_is_null(default_value)) {
-        BACNET_APPLICATION_DATA_VALUE app_value;
-        BACNET_WRITE_PROPERTY_DATA wp_data;
-        uint8_t apdu[MAX_APDU];
-        int apdu_len;
-        
-        memset(&app_value, 0, sizeof(app_value));
-        memset(&wp_data, 0, sizeof(wp_data));
-        
-        /* Détecter le type de valeur dans cet ordre précis */
-        if (json_is_boolean(default_value)) {
-            /* BOOLEAN: true/false */
-            app_value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
-            app_value.type.Boolean = json_boolean_value(default_value);
-            printf("  Setting default value: %s (BOOLEAN)\n", 
-                   app_value.type.Boolean ? "true" : "false");
-        }
-        else if (json_is_real(default_value)) {
-            /* REAL: valeurs décimales */
-            app_value.tag = BACNET_APPLICATION_TAG_REAL;
-            app_value.type.Real = (float)json_real_value(default_value);
-            printf("  Setting default value: %f (REAL)\n", app_value.type.Real);
-        }
-        else if (json_is_integer(default_value)) {
-            /* ENUMERATED: valeurs entières (0, 1, 2, etc.) */
-            app_value.tag = BACNET_APPLICATION_TAG_ENUMERATED;
-            app_value.type.Enumerated = (uint32_t)json_integer_value(default_value);
-            printf("  Setting default value: %u (ENUMERATED)\n", 
-                   app_value.type.Enumerated);
-        }
-        
-        /* Encoder et écrire la valeur */
-        apdu_len = bacapp_encode_application_data(&apdu[0], &app_value);
-        
-        wp_data.object_type = OBJECT_SCHEDULE;
-        wp_data.object_instance = inst;
-        wp_data.object_property = PROP_SCHEDULE_DEFAULT;
-        wp_data.array_index = BACNET_ARRAY_ALL;
-        wp_data.application_data_len = apdu_len;
-        memcpy(wp_data.application_data, &apdu[0], apdu_len);
-        wp_data.priority = BACNET_NO_PRIORITY;
-        wp_data.error_code = ERROR_CODE_SUCCESS;
-        
-        apdu_len = Schedule_Write_Property(&wp_data);
-        if (apdu_len > 0 && wp_data.error_code == ERROR_CODE_SUCCESS) {
-            printf("  Default value set successfully\n");
-        } else {
-            printf("  Failed to set default value (error: %d)\n", wp_data.error_code);
-        }
-    }
-    
-    /* Configuration de priority */
-    priority = json_object_get(it, "priority");
-    if (json_is_integer(priority)) {
-        BACNET_APPLICATION_DATA_VALUE app_value;
-        BACNET_WRITE_PROPERTY_DATA wp_data;
-        uint8_t apdu[MAX_APDU];
-        int apdu_len;
-        uint8_t prio;
-        
-        prio = (uint8_t)json_integer_value(priority);
-        
-        if (prio > 0 && prio <= 16) {
-            memset(&app_value, 0, sizeof(app_value));
-            memset(&wp_data, 0, sizeof(wp_data));
+        else if (strcmp(typ, "schedule") == 0) {
+            bool exists;
+            size_t day_idx;
+            json_t *weekly_schedule;
+            json_t *default_value;
+            json_t *priority;
+            double val;
             
-            app_value.tag = BACNET_APPLICATION_TAG_UNSIGNED_INT;
-            app_value.type.Unsigned_Int = prio;
-            
-            apdu_len = bacapp_encode_application_data(&apdu[0], &app_value);
-            
-            wp_data.object_type = OBJECT_SCHEDULE;
-            wp_data.object_instance = inst;
-            wp_data.object_property = PROP_PRIORITY_FOR_WRITING;
-            wp_data.array_index = BACNET_ARRAY_ALL;
-            wp_data.application_data_len = apdu_len;
-            memcpy(wp_data.application_data, &apdu[0], apdu_len);
-            wp_data.priority = BACNET_NO_PRIORITY;
-            wp_data.error_code = ERROR_CODE_SUCCESS;
-            
-            apdu_len = Schedule_Write_Property(&wp_data);
-            if (apdu_len > 0 && wp_data.error_code == ERROR_CODE_SUCCESS) {
-                printf("  Priority set to: %u\n", prio);
-            } else {
-                printf("  Failed to set priority (error: %d)\n", wp_data.error_code);
+            exists = Schedule_Valid_Instance(inst);
+            if (!exists) {
+                printf("Schedule %u does not exist. MAX_SCHEDULES may be too low or instance out of range.\n", inst);
+                printf("  Schedules available: 0 to %u\n", Schedule_Count() > 0 ? Schedule_Count() - 1 : 0);
+                continue;
             }
-        }
-    }
-    
-    /* ======== MODIFICATION: weeklySchedule avec support BOOLEAN ======== */
-    /* Configuration du weekly schedule */
-    weekly_schedule = json_object_get(it, "weeklySchedule");
-    if (json_is_array(weekly_schedule)) {
-        printf("  Configuring weekly schedule...\n");
-        for (day_idx = 0; day_idx < json_array_size(weekly_schedule) && day_idx < 7; day_idx++) {
-            json_t *day_schedule = json_array_get(weekly_schedule, day_idx);
-            if (json_is_array(day_schedule)) {
-                BACNET_DAILY_SCHEDULE daily;
-                size_t time_idx;
+            
+            printf("Configuring Schedule %u\n", inst);
+            
+            if (name) {
+                char *name_copy = strdup(name);
+                if (name_copy) {
+                    set_object_name(OBJECT_SCHEDULE, inst, name_copy);
+                    printf("  Schedule name: '%s'\n", name);
+                }
+            }
+            
+            default_value = json_object_get(it, "defaultValue");
+            if (default_value && !json_is_null(default_value)) {
+                BACNET_APPLICATION_DATA_VALUE app_value;
+                BACNET_WRITE_PROPERTY_DATA wp_data;
+                uint8_t apdu[MAX_APDU];
+                int apdu_len;
                 
-                daily.TV_Count = 0;
+                memset(&app_value, 0, sizeof(app_value));
+                memset(&wp_data, 0, sizeof(wp_data));
                 
-                for (time_idx = 0; time_idx < json_array_size(day_schedule) && time_idx < 50; time_idx++) {
-                    json_t *time_value = json_array_get(day_schedule, time_idx);
-                    json_t *jtime = json_object_get(time_value, "time");
-                    json_t *jvalue = json_object_get(time_value, "value");
+                if (json_is_boolean(default_value)) {
+                    app_value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
+                    app_value.type.Boolean = json_boolean_value(default_value);
+                    printf("  Setting default value: %s (BOOLEAN)\n", 
+                        app_value.type.Boolean ? "true" : "false");
+                }
+                else if (json_is_real(default_value)) {
+                    app_value.tag = BACNET_APPLICATION_TAG_REAL;
+                    app_value.type.Real = (float)json_real_value(default_value);
+                    printf("  Setting default value: %f (REAL)\n", app_value.type.Real);
+                }
+                else if (json_is_integer(default_value)) {
+                    app_value.tag = BACNET_APPLICATION_TAG_ENUMERATED;
+                    app_value.type.Enumerated = (uint32_t)json_integer_value(default_value);
+                    printf("  Setting default value: %u (ENUMERATED)\n", 
+                        app_value.type.Enumerated);
+                }
+                
+                apdu_len = bacapp_encode_application_data(&apdu[0], &app_value);
+                
+                wp_data.object_type = OBJECT_SCHEDULE;
+                wp_data.object_instance = inst;
+                wp_data.object_property = PROP_SCHEDULE_DEFAULT;
+                wp_data.array_index = BACNET_ARRAY_ALL;
+                wp_data.application_data_len = apdu_len;
+                memcpy(wp_data.application_data, &apdu[0], apdu_len);
+                wp_data.priority = BACNET_NO_PRIORITY;
+                wp_data.error_code = ERROR_CODE_SUCCESS;
+                
+                apdu_len = Schedule_Write_Property(&wp_data);
+                if (apdu_len > 0 && wp_data.error_code == ERROR_CODE_SUCCESS) {
+                    printf("  Default value set successfully\n");
+                } else {
+                    printf("  Failed to set default value (error: %d)\n", wp_data.error_code);
+                }
+            }
+            
+            priority = json_object_get(it, "priority");
+            if (json_is_integer(priority)) {
+                BACNET_APPLICATION_DATA_VALUE app_value;
+                BACNET_WRITE_PROPERTY_DATA wp_data;
+                uint8_t apdu[MAX_APDU];
+                int apdu_len;
+                uint8_t prio;
+                
+                prio = (uint8_t)json_integer_value(priority);
+                
+                if (prio > 0 && prio <= 16) {
+                    memset(&app_value, 0, sizeof(app_value));
+                    memset(&wp_data, 0, sizeof(wp_data));
                     
-                    /* MODIFICATION: Accepter les booléens, réels ET entiers */
-                    if (json_is_string(jtime) && (json_is_boolean(jvalue) || json_is_number(jvalue))) {
-                        const char *time_str = json_string_value(jtime);
-                        int hour, minute;
+                    app_value.tag = BACNET_APPLICATION_TAG_UNSIGNED_INT;
+                    app_value.type.Unsigned_Int = prio;
+                    
+                    apdu_len = bacapp_encode_application_data(&apdu[0], &app_value);
+                    
+                    wp_data.object_type = OBJECT_SCHEDULE;
+                    wp_data.object_instance = inst;
+                    wp_data.object_property = PROP_PRIORITY_FOR_WRITING;
+                    wp_data.array_index = BACNET_ARRAY_ALL;
+                    wp_data.application_data_len = apdu_len;
+                    memcpy(wp_data.application_data, &apdu[0], apdu_len);
+                    wp_data.priority = BACNET_NO_PRIORITY;
+                    wp_data.error_code = ERROR_CODE_SUCCESS;
+                    
+                    apdu_len = Schedule_Write_Property(&wp_data);
+                    if (apdu_len > 0 && wp_data.error_code == ERROR_CODE_SUCCESS) {
+                        printf("  Priority set to: %u\n", prio);
+                    } else {
+                        printf("  Failed to set priority (error: %d)\n", wp_data.error_code);
+                    }
+                }
+            }
+            
+            /* ======== MODIFICATION: weeklySchedule avec support BOOLEAN ======== */
+            /* Configuration du weekly schedule */
+            weekly_schedule = json_object_get(it, "weeklySchedule");
+            if (json_is_array(weekly_schedule)) {
+                printf("  Configuring weekly schedule...\n");
+                for (day_idx = 0; day_idx < json_array_size(weekly_schedule) && day_idx < 7; day_idx++) {
+                    json_t *day_schedule = json_array_get(weekly_schedule, day_idx);
+                    if (json_is_array(day_schedule)) {
+                        BACNET_DAILY_SCHEDULE daily;
+                        size_t time_idx;
                         
-                        if (sscanf(time_str, "%d:%d", &hour, &minute) == 2) {
-                            daily.Time_Values[time_idx].Time.hour = (uint8_t)hour;
-                            daily.Time_Values[time_idx].Time.min = (uint8_t)minute;
-                            daily.Time_Values[time_idx].Time.sec = 0;
-                            daily.Time_Values[time_idx].Time.hundredths = 0;
+                        daily.TV_Count = 0;
+                        
+                        for (time_idx = 0; time_idx < json_array_size(day_schedule) && time_idx < 50; time_idx++) {
+                            json_t *time_value = json_array_get(day_schedule, time_idx);
+                            json_t *jtime = json_object_get(time_value, "time");
+                            json_t *jvalue = json_object_get(time_value, "value");
                             
-                            /* Détecter le type de valeur dans cet ordre précis */
-                            if (json_is_boolean(jvalue)) {
-                                /* BOOLEAN: true/false */
-                                daily.Time_Values[time_idx].Value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
-                                daily.Time_Values[time_idx].Value.type.Boolean = json_boolean_value(jvalue);
+                            if (json_is_string(jtime) && (json_is_boolean(jvalue) || json_is_number(jvalue))) {
+                                const char *time_str = json_string_value(jtime);
+                                int hour, minute;
+                                
+                                if (sscanf(time_str, "%d:%d", &hour, &minute) == 2) {
+                                    daily.Time_Values[time_idx].Time.hour = (uint8_t)hour;
+                                    daily.Time_Values[time_idx].Time.min = (uint8_t)minute;
+                                    daily.Time_Values[time_idx].Time.sec = 0;
+                                    daily.Time_Values[time_idx].Time.hundredths = 0;
+                                    
+                                    if (json_is_boolean(jvalue)) {
+                                        daily.Time_Values[time_idx].Value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
+                                        daily.Time_Values[time_idx].Value.type.Boolean = json_boolean_value(jvalue);
+                                    }
+                                    else if (json_is_real(jvalue)) {
+                                        daily.Time_Values[time_idx].Value.tag = BACNET_APPLICATION_TAG_REAL;
+                                        daily.Time_Values[time_idx].Value.type.Real = (float)json_real_value(jvalue);
+                                    }
+                                    else if (json_is_integer(jvalue)) {
+                                        daily.Time_Values[time_idx].Value.tag = BACNET_APPLICATION_TAG_ENUMERATED;
+                                        daily.Time_Values[time_idx].Value.type.Enumerated = (uint32_t)json_integer_value(jvalue);
+                                    }
+                                    
+                                    daily.TV_Count++;
+                                }
                             }
-                            else if (json_is_real(jvalue)) {
-                                /* REAL: valeurs décimales */
-                                daily.Time_Values[time_idx].Value.tag = BACNET_APPLICATION_TAG_REAL;
-                                daily.Time_Values[time_idx].Value.type.Real = (float)json_real_value(jvalue);
+                        }
+                        
+                        if (daily.TV_Count > 0) {
+                            bool status = Schedule_Weekly_Schedule_Set(inst, (uint8_t)day_idx, &daily);
+                            if (status) {
+                                printf("    Day %u: %d time values configured\n", 
+                                    (unsigned int)day_idx, daily.TV_Count);
+                            } else {
+                                printf("    Day %u: Configuration failed\n", (unsigned int)day_idx);
                             }
-                            else if (json_is_integer(jvalue)) {
-                                /* ENUMERATED: valeurs entières */
-                                daily.Time_Values[time_idx].Value.tag = BACNET_APPLICATION_TAG_ENUMERATED;
-                                daily.Time_Values[time_idx].Value.type.Enumerated = (uint32_t)json_integer_value(jvalue);
-                            }
-                            
-                            daily.TV_Count++;
                         }
                     }
                 }
-                
-                if (daily.TV_Count > 0) {
-                    bool status = Schedule_Weekly_Schedule_Set(inst, (uint8_t)day_idx, &daily);
-                    if (status) {
-                        printf("    Day %u: %d time values configured\n", 
-                               (unsigned int)day_idx, daily.TV_Count);
-                    } else {
-                        printf("    Day %u: Configuration failed\n", (unsigned int)day_idx);
+            }
+            
+            printf("  Schedule %u configuration complete\n", inst);
+            
+            {
+                SCHEDULE_DESCR *desc = Schedule_Object(inst);
+                if (desc) {
+                    desc->Start_Date.year = 1900;
+                    desc->Start_Date.month = 1;
+                    desc->Start_Date.day = 1;
+                    desc->Start_Date.wday = BACNET_WEEKDAY_MONDAY;
+                    
+                    desc->End_Date.year = 2154;
+                    desc->End_Date.month = 12;
+                    desc->End_Date.day = 31;
+                    desc->End_Date.wday = BACNET_WEEKDAY_SUNDAY;
+                    
+                    printf("  Effective period FORCED: always active (1900-2154)\n");
+                    
+                    {
+                        BACNET_TIME time_of_day;
+                        BACNET_WEEKDAY wday;
+                        time_t now;
+                        struct tm *lt;
+                        
+                        now = time(NULL);
+                        lt = localtime(&now);
+                        
+                        time_of_day.hour = (uint8_t)lt->tm_hour;
+                        time_of_day.min = (uint8_t)lt->tm_min;
+                        time_of_day.sec = (uint8_t)lt->tm_sec;
+                        time_of_day.hundredths = 0;
+                        
+
+                        if (lt->tm_wday == 0) {
+                            wday = (BACNET_WEEKDAY)7; 
+                        } else {
+                            wday = (BACNET_WEEKDAY)lt->tm_wday;  
+                        }
+                        
+                        Schedule_Recalculate_PV(desc, wday, &time_of_day);
+                        
+                        if (desc->Present_Value.tag == BACNET_APPLICATION_TAG_BOOLEAN) {
+                            printf("  Initial PV: %s (BOOLEAN) at %02u:%02u wday=%u\n",
+                                desc->Present_Value.type.Boolean ? "true" : "false",
+                                time_of_day.hour, time_of_day.min, wday);
+                        } else if (desc->Present_Value.tag == BACNET_APPLICATION_TAG_ENUMERATED) {
+                            printf("  Initial PV: %u (ENUM) at %02u:%02u wday=%u\n",
+                                desc->Present_Value.type.Enumerated,
+                                time_of_day.hour, time_of_day.min, wday);
+                        } else if (desc->Present_Value.tag == BACNET_APPLICATION_TAG_REAL) {
+                            printf("  Initial PV: %.1f (REAL) at %02u:%02u wday=%u\n",
+                                desc->Present_Value.type.Real,
+                                time_of_day.hour, time_of_day.min, wday);
+                        }
                     }
                 }
             }
         }
-    }
-    
-    printf("  Schedule %u configuration complete\n", inst);
-    
-    /* Forcer la période effective et calculer le Present_Value initial */
-    {
-        SCHEDULE_DESCR *desc = Schedule_Object(inst);
-        if (desc) {
-            /* FORCER une période "toujours active" */
-            desc->Start_Date.year = 1900;
-            desc->Start_Date.month = 1;
-            desc->Start_Date.day = 1;
-            desc->Start_Date.wday = BACNET_WEEKDAY_MONDAY;
+    trendlogs = json_object_get(root, "trendlogs");
+    if (trendlogs && json_is_array(trendlogs)) {
+        size_t tl_idx, tl_count = json_array_size(trendlogs);
+        
+        printf("\n========== Creating Trendlogs ==========\n");
+        printf("Creating %zu Trendlog(s)...\n", tl_count);
+        
+        for (tl_idx = 0; tl_idx < tl_count; tl_idx++) {
+            json_t *tl_item = json_array_get(trendlogs, tl_idx);
+            json_t *j_instance, *j_name, *j_desc, *j_enable;
+            json_t *j_linked, *j_interval, *j_buffer;
+            json_t *j_trigger, *j_cov, *j_stop_full, *j_align;
             
-            desc->End_Date.year = 2154;
-            desc->End_Date.month = 12;
-            desc->End_Date.day = 31;
-            desc->End_Date.wday = BACNET_WEEKDAY_SUNDAY;
+            uint32_t tl_instance;
+            const char *tl_name, *tl_desc;
+            bool tl_enable;
+            uint32_t log_interval, buffer_size;
+            const char *trigger_type;
             
-            printf("  Effective period FORCED: always active (1900-2154)\n");
+            BACNET_OBJECT_TYPE source_type = OBJECT_ANALOG_VALUE;
+            uint32_t source_instance = 0;
             
-            /* Forcer le premier calcul du Present_Value avec l'heure RÉELLE */
-            {
-                BACNET_TIME time_of_day;
-                BACNET_WEEKDAY wday;
-                time_t now;
-                struct tm *lt;
+            j_instance = json_object_get(tl_item, "instance");
+            j_name = json_object_get(tl_item, "name");
+            j_desc = json_object_get(tl_item, "description");
+            j_enable = json_object_get(tl_item, "enable");
+            j_linked = json_object_get(tl_item, "linked_object");
+            j_interval = json_object_get(tl_item, "log_interval");
+            j_buffer = json_object_get(tl_item, "buffer_size");
+            j_trigger = json_object_get(tl_item, "trigger_type");
+            j_cov = json_object_get(tl_item, "cov_increment");
+            j_stop_full = json_object_get(tl_item, "stop_when_full");
+            j_align = json_object_get(tl_item, "align_intervals");
+            
+            if (!j_instance || !j_name) {
+                printf("  Trendlog %zu: missing instance or name, skipped\n", tl_idx);
+                continue;
+            }
+            
+            tl_instance = (uint32_t)json_integer_value(j_instance);
+            tl_name = json_string_value(j_name);
+            tl_desc = j_desc ? json_string_value(j_desc) : "";
+            tl_enable = j_enable ? json_boolean_value(j_enable) : true;
+            log_interval = j_interval ? (uint32_t)json_integer_value(j_interval) : 300;
+            buffer_size = j_buffer ? (uint32_t)json_integer_value(j_buffer) : 100;
+            trigger_type = j_trigger ? json_string_value(j_trigger) : "PERIODIC";
+            
+            if (j_linked && json_is_object(j_linked)) {
+                json_t *j_type = json_object_get(j_linked, "type");
+                json_t *j_obj_inst = json_object_get(j_linked, "instance");
                 
-                /* Obtenir l'heure SYSTÈME directement */
-                now = time(NULL);
-                lt = localtime(&now);
-                
-                /* Remplir time_of_day avec l'heure réelle */
-                time_of_day.hour = (uint8_t)lt->tm_hour;
-                time_of_day.min = (uint8_t)lt->tm_min;
-                time_of_day.sec = (uint8_t)lt->tm_sec;
-                time_of_day.hundredths = 0;
-                
-                /* Calculer le jour de la semaine */
-                if (lt->tm_wday == 0) {
-                    wday = (BACNET_WEEKDAY)7;  /* Dimanche */
-                } else {
-                    wday = (BACNET_WEEKDAY)lt->tm_wday;  /* Lundi=1...Samedi=6 */
+                if (j_type && json_is_string(j_type)) {
+                    const char *type_str = json_string_value(j_type);
+                    
+                    if (strcmp(type_str, "ANALOG_VALUE") == 0) {
+                        source_type = OBJECT_ANALOG_VALUE;
+                    } else if (strcmp(type_str, "ANALOG_INPUT") == 0) {
+                        source_type = OBJECT_ANALOG_INPUT;
+                    } else if (strcmp(type_str, "BINARY_VALUE") == 0) {
+                        source_type = OBJECT_BINARY_VALUE;
+                    } else if (strcmp(type_str, "BINARY_INPUT") == 0) {
+                        source_type = OBJECT_BINARY_INPUT;
+                    } else if (strcmp(type_str, "MULTI_STATE_VALUE") == 0) {
+                        source_type = OBJECT_MULTI_STATE_VALUE;
+                    }
                 }
                 
-                /* Calculer le Present_Value */
-                Schedule_Recalculate_PV(desc, wday, &time_of_day);
-                
-                /* MODIFICATION: Afficher selon le type */
-                if (desc->Present_Value.tag == BACNET_APPLICATION_TAG_BOOLEAN) {
-                    printf("  Initial PV: %s (BOOLEAN) at %02u:%02u wday=%u\n",
-                           desc->Present_Value.type.Boolean ? "true" : "false",
-                           time_of_day.hour, time_of_day.min, wday);
-                } else if (desc->Present_Value.tag == BACNET_APPLICATION_TAG_ENUMERATED) {
-                    printf("  Initial PV: %u (ENUM) at %02u:%02u wday=%u\n",
-                           desc->Present_Value.type.Enumerated,
-                           time_of_day.hour, time_of_day.min, wday);
-                } else if (desc->Present_Value.tag == BACNET_APPLICATION_TAG_REAL) {
-                    printf("  Initial PV: %.1f (REAL) at %02u:%02u wday=%u\n",
-                           desc->Present_Value.type.Real,
-                           time_of_day.hour, time_of_day.min, wday);
+                if (j_obj_inst) {
+                    source_instance = (uint32_t)json_integer_value(j_obj_inst);
                 }
             }
+            
+            printf("\nTrendlog %u: %s\n", tl_instance, tl_name);
+            printf("  Description: %s\n", tl_desc);
+            printf("  Trigger: %s, Interval: %u sec, Buffer: %u\n", 
+                   trigger_type, log_interval, buffer_size);
+            
+            if (create_trendlog(tl_instance, tl_name, source_type, source_instance,
+                               log_interval, buffer_size, tl_enable)) {
+                
+                printf("  Trendlog %u created successfully\n", tl_instance);
+            } else {
+                printf("  Failed to create Trendlog %u\n", tl_instance);
+            }
         }
+        
+        printf("========== Trendlogs Created ==========\n\n");
     }
-}
 
 
     }
@@ -1798,105 +1656,7 @@ else if (strcmp(typ, "schedule") == 0) {
            Binary_Input_Count(), Binary_Output_Count(), Binary_Value_Count());
     printf("  MSI: %u, MSO: %u, MSV: %u\n", 
            Multistate_Input_Count(), Multistate_Output_Count(), Multistate_Value_Count());
-    printf("  SCH: %u\n", Schedule_Count());
-    root = json_loads(json_text, 0, &jerr);  // Recharger le JSON
-    if (root) {
-        json_t *trendlogs = json_object_get(root, "trendlogs");
-        
-        if (trendlogs && json_is_array(trendlogs)) {
-            size_t tl_count = json_array_size(trendlogs);
-            printf("\n========== Configuration Trendlogs ==========\n");
-            printf("Loading %zu Trendlog(s)...\n", tl_count);
-            
-            for (size_t i = 0; i < tl_count; i++) {
-                json_t *tl = json_array_get(trendlogs, i);
-                
-                TRENDLOG_CONFIG config = {0};
-                
-                json_t *j_instance = json_object_get(tl, "instance");
-                json_t *j_name = json_object_get(tl, "name");
-                json_t *j_desc = json_object_get(tl, "description");
-                json_t *j_enable = json_object_get(tl, "enable");
-                json_t *j_trigger = json_object_get(tl, "trigger_type");
-                json_t *j_interval = json_object_get(tl, "log_interval");
-                json_t *j_buffer = json_object_get(tl, "buffer_size");
-                json_t *j_cov = json_object_get(tl, "cov_increment");
-                json_t *j_linked = json_object_get(tl, "linked_object");
-                
-                if (!j_instance || !j_name || !j_linked) {
-                    printf("  Trendlog %zu: missing required fields, skipped\n", i);
-                    continue;
-                }
-                
-                config.instance = (uint32_t)json_integer_value(j_instance);
-                strncpy(config.name, json_string_value(j_name), sizeof(config.name)-1);
-                
-                if (j_desc) {
-                    strncpy(config.description, json_string_value(j_desc), 
-                           sizeof(config.description)-1);
-                }
-                
-                config.enable = j_enable ? json_boolean_value(j_enable) : true;
-                config.log_interval = j_interval ? (uint32_t)json_integer_value(j_interval) : 300;
-                config.buffer_size = j_buffer ? (uint32_t)json_integer_value(j_buffer) : 2016;
-                config.cov_increment = j_cov ? (float)json_real_value(j_cov) : 0.5;
-                
-                /* Parse trigger type */
-                if (j_trigger && json_is_string(j_trigger)) {
-                    const char *trigger = json_string_value(j_trigger);
-                    if (strcmp(trigger, "PERIODIC") == 0) {
-                        config.trigger_type = TRENDLOG_TRIGGER_PERIODIC;
-                    } else if (strcmp(trigger, "COV") == 0) {
-                        config.trigger_type = TRENDLOG_TRIGGER_COV;
-                    } else {
-                        config.trigger_type = TRENDLOG_TRIGGER_TRIGGERED;
-                    }
-                } else {
-                    config.trigger_type = TRENDLOG_TRIGGER_PERIODIC;
-                }
-                
-                /* Parse linked object */
-                if (json_is_object(j_linked)) {
-                    json_t *j_type = json_object_get(j_linked, "type");
-                    json_t *j_obj_inst = json_object_get(j_linked, "instance");
-                    
-                    if (j_type && json_is_string(j_type)) {
-                        const char *type_str = json_string_value(j_type);
-                        
-                        if (strcmp(type_str, "ANALOG_VALUE") == 0) {
-                            config.linked_object_type = OBJECT_ANALOG_VALUE;
-                        } else if (strcmp(type_str, "ANALOG_INPUT") == 0) {
-                            config.linked_object_type = OBJECT_ANALOG_INPUT;
-                        } else if (strcmp(type_str, "BINARY_VALUE") == 0) {
-                            config.linked_object_type = OBJECT_BINARY_VALUE;
-                        } else if (strcmp(type_str, "BINARY_INPUT") == 0) {
-                            config.linked_object_type = OBJECT_BINARY_INPUT;
-                        } else if (strcmp(type_str, "MULTI_STATE_VALUE") == 0) {
-                            config.linked_object_type = OBJECT_MULTI_STATE_VALUE;
-                        }
-                    }
-                    
-                    if (j_obj_inst) {
-                        config.linked_object_instance = (uint32_t)json_integer_value(j_obj_inst);
-                    }
-                }
-                
-                /* Ajoute le Trendlog */
-                if (TrendLog_Add(&config)) {
-                    printf("  Trendlog %u (%s) added successfully\n", 
-                           config.instance, config.name);
-                } else {
-                    printf("  Trendlog %u (%s) failed to add\n", 
-                           config.instance, config.name);
-                }
-            }
-            
-            printf("Trendlog configuration complete: %u active\n", TrendLog_Count());
-            printf("==============================================\n\n");
-        }
-        
-        json_decref(root);
-    }
+    printf("  SCH: %u, TL: %u\n", Schedule_Count(), Trend_Log_Count()); 
     fflush(stdout);
     
     save_current_config();
@@ -2017,28 +1777,6 @@ static int handle_socket_line(const char *line)
         (void)write(g_client_fd, buf, strlen(buf));
         return 0;
     }
-    else if (strncmp(line, "TRENDLOG ", 9) == 0) {
-        const char *json_str = line + 9;
-        
-        json_error_t error;
-        json_t *root = json_loads(json_str, 0, &error);
-        
-        if (!root) {
-            (void)write(g_client_fd, "ERR Invalid JSON\n", 17);
-            return 0;
-        }
-        
-        char *response = handle_trendlog_command(root);
-        if (response) {
-            write(g_client_fd, response, strlen(response));
-            write(g_client_fd, "\n", 1);
-            free(response);
-        }
-        
-        json_decref(root);
-        return 0;
-    }
-
     (void)write(g_client_fd, "ERR unknown\n", 12);
     return 0;
 }
@@ -2210,12 +1948,6 @@ int main(int argc, char *argv[])
     snprintf(buf, sizeof(buf), "Device Name: %s", device_name);
     print_timestamp_log(buf);
 
-     printf("\n========== Initialisation Trendlog Manager ==========\n");
-    TrendLog_Manager_Init();
-    start_trendlog_thread();
-    printf("Trendlog Manager initialized\n");
-    printf("====================================================\n\n");
-
     g_listen_fd = socket_listen_local(g_socket_port);
     if (g_listen_fd >= 0) {
         printf("Control socket: 127.0.0.1:%d\n", g_socket_port);
@@ -2262,48 +1994,46 @@ int main(int argc, char *argv[])
                 save_current_config();
             }
         }
+        if (mstimer_expired(&Schedule_PV_Timer)) {
+            BACNET_TIME time_of_day;
+            BACNET_WEEKDAY wday;
+            unsigned sc_count;
+            unsigned i;
+            time_t now;
+            struct tm *lt;
 
-/* Mise à jour minute des PRESENT_VALUE des Schedule */
-/* Mise à jour minute des PRESENT_VALUE des Schedule */
-if (mstimer_expired(&Schedule_PV_Timer)) {
-    BACNET_TIME time_of_day;
-    BACNET_WEEKDAY wday;
-    unsigned sc_count;
-    unsigned i;
-    time_t now;
-    struct tm *lt;
+            mstimer_reset(&Schedule_PV_Timer);
 
-    mstimer_reset(&Schedule_PV_Timer);
+            now = time(NULL);
+            lt = localtime(&now);
+            
+            time_of_day.hour = (uint8_t)lt->tm_hour;
+            time_of_day.min = (uint8_t)lt->tm_min;
+            time_of_day.sec = (uint8_t)lt->tm_sec;
+            time_of_day.hundredths = 0;
+            
+            if (lt->tm_wday == 0) {
+                wday = (BACNET_WEEKDAY)7;
+            } else {
+                wday = (BACNET_WEEKDAY)lt->tm_wday; 
+            }
 
-    /* Obtenir l'heure SYSTÈME directement (datetime_local ne fonctionne pas) */
-    now = time(NULL);
-    lt = localtime(&now);
-    
-    /* Remplir time_of_day avec l'heure réelle */
-    time_of_day.hour = (uint8_t)lt->tm_hour;
-    time_of_day.min = (uint8_t)lt->tm_min;
-    time_of_day.sec = (uint8_t)lt->tm_sec;
-    time_of_day.hundredths = 0;
-    
-    /* Calculer le jour de la semaine */
-    if (lt->tm_wday == 0) {
-        wday = (BACNET_WEEKDAY)7;  /* Dimanche */
-    } else {
-        wday = (BACNET_WEEKDAY)lt->tm_wday;  /* Lundi=1...Samedi=6 */
-    }
-
-    /* Recalcule Present_Value pour tous les schedules */
-    sc_count = Schedule_Count();
-    for (i = 0; i < sc_count; i++) {
-        uint32_t inst = Schedule_Index_To_Instance(i);
-        SCHEDULE_DESCR *desc = Schedule_Object(inst);
-        if (desc) {
-            Schedule_Recalculate_PV(desc, wday, &time_of_day);
+            sc_count = Schedule_Count();
+            for (i = 0; i < sc_count; i++) {
+                uint32_t inst = Schedule_Index_To_Instance(i);
+                SCHEDULE_DESCR *desc = Schedule_Object(inst);
+                if (desc) {
+                    Schedule_Recalculate_PV(desc, wday, &time_of_day);
+                }
+            }
         }
-    }
-}
 
-
+        static uint16_t trendlog_seconds = 0;
+        trendlog_seconds++;
+        if (trendlog_seconds >= 60) {
+            trend_log_timer(60); 
+            trendlog_seconds = 0;
+        }
 
 
 
