@@ -377,7 +377,7 @@ static object_functions_t My_Object_Table[] = {
       NULL,
       NULL },
 
-       { OBJECT_TRENDLOG,
+    { OBJECT_TRENDLOG,
       Trend_Log_Init,
       Trend_Log_Count,
       Trend_Log_Index_To_Instance,
@@ -386,13 +386,14 @@ static object_functions_t My_Object_Table[] = {
       Trend_Log_Read_Property,
       Trend_Log_Write_Property,
       Trend_Log_Property_Lists,
-      TrendLogGetRRInfo,
-      NULL, NULL,
-      rr_trend_log_encode,
-      NULL, NULL, NULL, NULL,
-      NULL,  /* Create - on va le faire nous-mêmes */
-      NULL,  /* Delete - on va le faire nous-mêmes */
-      NULL },
+      TrendLogGetRRInfo,          
+      NULL,                        
+      NULL,                        
+      rr_trend_log_encode,        
+      NULL, NULL, NULL, NULL,     
+      NULL,                        
+      NULL,                        
+      NULL },                      
 
 
     /* Terminator */
@@ -1068,6 +1069,7 @@ static int apply_config_from_json(const char *json_text)
     json_error_t jerr;
     json_t *root = json_loads(json_text, 0, &jerr);
     json_t *objs;
+    json_t *trendlogs;
     size_t i, n;
 
     if (!root) {
@@ -1560,8 +1562,7 @@ static int apply_config_from_json(const char *json_text)
     if (trendlogs && json_is_array(trendlogs)) {
         size_t tl_idx, tl_count = json_array_size(trendlogs);
         
-        printf("\n========== Creating Trendlogs ==========\n");
-        printf("Creating %zu Trendlog(s)...\n", tl_count);
+     printf("Creating %lu Trendlog(s)...\n", (unsigned long)tl_count);
         
         for (tl_idx = 0; tl_idx < tl_count; tl_idx++) {
             json_t *tl_item = json_array_get(trendlogs, tl_idx);
@@ -1591,7 +1592,8 @@ static int apply_config_from_json(const char *json_text)
             j_align = json_object_get(tl_item, "align_intervals");
             
             if (!j_instance || !j_name) {
-                printf("  Trendlog %zu: missing instance or name, skipped\n", tl_idx);
+                printf("  Trendlog %lu: missing instance or name, skipped\n", 
+                       (unsigned long)tl_idx);
                 continue;
             }
             
@@ -1602,6 +1604,10 @@ static int apply_config_from_json(const char *json_text)
             log_interval = j_interval ? (uint32_t)json_integer_value(j_interval) : 300;
             buffer_size = j_buffer ? (uint32_t)json_integer_value(j_buffer) : 100;
             trigger_type = j_trigger ? json_string_value(j_trigger) : "PERIODIC";
+
+            (void)j_cov;       /* TODO: Implémenter COV increment */
+            (void)j_stop_full; /* TODO: Implémenter stop when full */
+            (void)j_align; 
             
             if (j_linked && json_is_object(j_linked)) {
                 json_t *j_type = json_object_get(j_linked, "type");
@@ -1646,7 +1652,7 @@ static int apply_config_from_json(const char *json_text)
     }
 
 
-    }
+    
 
     json_decref(root);
     printf("Object creation complete.\n");
@@ -1971,6 +1977,7 @@ int main(int argc, char *argv[])
     printf("I-Am broadcasted\n");
 
     printf("Entering main loop...\n");
+    static uint16_t trendlog_seconds = 0; 
     while (!g_shutdown) {
         pdu_len = datalink_receive(&src, &Rx_Buf[0], MAX_MPDU, timeout);
         if (pdu_len) {
@@ -2028,7 +2035,6 @@ int main(int argc, char *argv[])
             }
         }
 
-        static uint16_t trendlog_seconds = 0;
         trendlog_seconds++;
         if (trendlog_seconds >= 60) {
             trend_log_timer(60); 
