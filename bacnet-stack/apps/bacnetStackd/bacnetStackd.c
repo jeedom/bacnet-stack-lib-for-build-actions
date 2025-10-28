@@ -156,22 +156,23 @@ static bool create_trendlog(uint32_t instance, const char *name,
                            uint32_t buffer_size,
                            bool enable)
 {
-
-    if (!Trend_Log_Object_Instance_Add(instance)) {
-        fprintf(stderr, "Failed to create Trendlog instance %u\n", instance);
+    (void)enable;  /* Éviter warning unused */
+    (void)log_interval;
+    (void)buffer_size;
+    
+    /* Vérifier que l'instance existe */
+    if (!Trend_Log_Valid_Instance(instance)) {
+        fprintf(stderr, "Trendlog instance %u not valid (MAX_TREND_LOGS limit)\n", instance);
         return false;
     }
     
-
-    if (name && *name) {
-        BACNET_CHARACTER_STRING char_string;
-        characterstring_init_ansi(&char_string, name);
-
-    }
-    
-    printf("Trendlog %u created: %s\n", instance, name ? name : "");
+    /* Les Trendlogs sont pré-créés, on les configure juste */
+    printf("Configuring Trendlog %u: %s\n", instance, name ? name : "");
     printf("  Linked to: Type=%d Instance=%u\n", source_type, source_instance);
     printf("  Interval: %u seconds, Buffer: %u records\n", log_interval, buffer_size);
+    
+    /* TODO: Configurer les propriétés via Write Property si nécessaire */
+    /* Par exemple: Object_Name, Log_Device_Object_Property, Log_Interval, etc. */
     
     return true;
 }
