@@ -1907,6 +1907,7 @@ int main(int argc, char *argv[])
     const char *envp;
     int argi = 1;
     char buf[256];
+    static uint16_t trendlog_seconds = 0; 
     printf("BACnet Stack Server (Jeedom)\n");
     printf("Version: %s\n", BACNET_VERSION_TEXT);
 
@@ -1977,7 +1978,6 @@ int main(int argc, char *argv[])
     printf("I-Am broadcasted\n");
 
     printf("Entering main loop...\n");
-    static uint16_t trendlog_seconds = 0; 
     while (!g_shutdown) {
         pdu_len = datalink_receive(&src, &Rx_Buf[0], MAX_MPDU, timeout);
         if (pdu_len) {
