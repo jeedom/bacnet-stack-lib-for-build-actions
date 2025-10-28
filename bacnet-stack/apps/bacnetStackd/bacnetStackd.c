@@ -1725,44 +1725,62 @@ static int apply_config_from_json(const char *json_text)
                     }
                 }
             }
-        }else if (strcmp(typ, "trendlog") == 0) {
+        } else if (strcmp(typ, "trendlog") == 0) {
+            /* Déclarations des pointeurs JSON */
             json_t *j_desc, *j_enable, *j_linked, *j_interval;
-            json_t *j_buffer, *j_trigger;
+            json_t *j_buffer, *j_trigger, *j_cov, *j_stop_full, *j_align;
             
+            /* Déclarations des variables */
+            uint32_t tl_instance;
+            const char *tl_name;
             const char *tl_desc;
             bool tl_enable;
-            uint32_t log_interval, buffer_size;
+            uint32_t log_interval;
+            uint32_t buffer_size;
             const char *trigger_type;
-            BACNET_OBJECT_TYPE source_type = OBJECT_ANALOG_VALUE;
-            uint32_t source_instance = 0;
+            BACNET_OBJECT_TYPE source_type;
+            uint32_t source_instance;
             
-            /* Récupérer les champs du Trendlog */
+            /* Initialisation */
+            source_type = OBJECT_ANALOG_VALUE;
+            source_instance = 0;
+            
+            /* Récupérer instance et name (déjà extraits) */
+            tl_instance = inst;
+            tl_name = name;
+            
+            /* Récupérer les autres champs du Trendlog */
             j_desc = json_object_get(it, "description");
             j_enable = json_object_get(it, "enable");
             
-            /* Support "linkedObject" (camelCase) */
+            /* Support "linkedObject" (camelCase) et "linked_object" (snake_case) */
             j_linked = json_object_get(it, "linkedObject");
             if (!j_linked) {
-                j_linked = json_object_get(it, "linked_object");  /* Fallback */
+                j_linked = json_object_get(it, "linked_object");
             }
             
-            /* Support "logInterval" (camelCase) */
+            /* Support "logInterval" (camelCase) et "log_interval" (snake_case) */
             j_interval = json_object_get(it, "logInterval");
             if (!j_interval) {
-                j_interval = json_object_get(it, "log_interval");  /* Fallback */
+                j_interval = json_object_get(it, "log_interval");
             }
             
-            /* Support "bufferSize" (camelCase) */
+            /* Support "bufferSize" (camelCase) et "buffer_size" (snake_case) */
             j_buffer = json_object_get(it, "bufferSize");
             if (!j_buffer) {
-                j_buffer = json_object_get(it, "buffer_size");  /* Fallback */
+                j_buffer = json_object_get(it, "buffer_size");
             }
             
-            /* Support "triggerType" (camelCase) */
+            /* Support "triggerType" (camelCase) et "trigger_type" (snake_case) */
             j_trigger = json_object_get(it, "triggerType");
             if (!j_trigger) {
-                j_trigger = json_object_get(it, "trigger_type");  /* Fallback */
+                j_trigger = json_object_get(it, "trigger_type");
             }
+            
+            /* Propriétés non encore supportées */
+            j_cov = json_object_get(it, "cov_increment");
+            j_stop_full = json_object_get(it, "stop_when_full");
+            j_align = json_object_get(it, "align_intervals");
             
             /* Valeurs par défaut */
             tl_desc = j_desc ? json_string_value(j_desc) : "";
@@ -1770,6 +1788,11 @@ static int apply_config_from_json(const char *json_text)
             log_interval = j_interval ? (uint32_t)json_integer_value(j_interval) : 300;
             buffer_size = j_buffer ? (uint32_t)json_integer_value(j_buffer) : 100;
             trigger_type = j_trigger ? json_string_value(j_trigger) : "periodic";
+            
+            /* Éviter warnings pour variables non utilisées */
+            (void)j_cov;
+            (void)j_stop_full;
+            (void)j_align;
             
             /* Parser l'objet lié (linkedObject) */
             if (j_linked && json_is_object(j_linked)) {
@@ -1779,24 +1802,33 @@ static int apply_config_from_json(const char *json_text)
                 if (j_type && json_is_string(j_type)) {
                     const char *type_str = json_string_value(j_type);
                     
-                    /* Support format avec tiret: "analog-input" */
-                    if (strcmp(type_str, "analog-input") == 0 || strcmp(type_str, "ANALOG_INPUT") == 0) {
+                    /* Support format avec tiret: "analog-input" ET "ANALOG_INPUT" */
+                    if (strcmp(type_str, "analog-input") == 0 || 
+                        strcmp(type_str, "ANALOG_INPUT") == 0) {
                         source_type = OBJECT_ANALOG_INPUT;
-                    } else if (strcmp(type_str, "analog-output") == 0 || strcmp(type_str, "ANALOG_OUTPUT") == 0) {
+                    } else if (strcmp(type_str, "analog-output") == 0 || 
+                               strcmp(type_str, "ANALOG_OUTPUT") == 0) {
                         source_type = OBJECT_ANALOG_OUTPUT;
-                    } else if (strcmp(type_str, "analog-value") == 0 || strcmp(type_str, "ANALOG_VALUE") == 0) {
+                    } else if (strcmp(type_str, "analog-value") == 0 || 
+                               strcmp(type_str, "ANALOG_VALUE") == 0) {
                         source_type = OBJECT_ANALOG_VALUE;
-                    } else if (strcmp(type_str, "binary-input") == 0 || strcmp(type_str, "BINARY_INPUT") == 0) {
+                    } else if (strcmp(type_str, "binary-input") == 0 || 
+                               strcmp(type_str, "BINARY_INPUT") == 0) {
                         source_type = OBJECT_BINARY_INPUT;
-                    } else if (strcmp(type_str, "binary-output") == 0 || strcmp(type_str, "BINARY_OUTPUT") == 0) {
+                    } else if (strcmp(type_str, "binary-output") == 0 || 
+                               strcmp(type_str, "BINARY_OUTPUT") == 0) {
                         source_type = OBJECT_BINARY_OUTPUT;
-                    } else if (strcmp(type_str, "binary-value") == 0 || strcmp(type_str, "BINARY_VALUE") == 0) {
+                    } else if (strcmp(type_str, "binary-value") == 0 || 
+                               strcmp(type_str, "BINARY_VALUE") == 0) {
                         source_type = OBJECT_BINARY_VALUE;
-                    } else if (strcmp(type_str, "multi-state-input") == 0 || strcmp(type_str, "MULTI_STATE_INPUT") == 0) {
+                    } else if (strcmp(type_str, "multi-state-input") == 0 || 
+                               strcmp(type_str, "MULTI_STATE_INPUT") == 0) {
                         source_type = OBJECT_MULTI_STATE_INPUT;
-                    } else if (strcmp(type_str, "multi-state-output") == 0 || strcmp(type_str, "MULTI_STATE_OUTPUT") == 0) {
+                    } else if (strcmp(type_str, "multi-state-output") == 0 || 
+                               strcmp(type_str, "MULTI_STATE_OUTPUT") == 0) {
                         source_type = OBJECT_MULTI_STATE_OUTPUT;
-                    } else if (strcmp(type_str, "multi-state-value") == 0 || strcmp(type_str, "MULTI_STATE_VALUE") == 0) {
+                    } else if (strcmp(type_str, "multi-state-value") == 0 || 
+                               strcmp(type_str, "MULTI_STATE_VALUE") == 0) {
                         source_type = OBJECT_MULTI_STATE_VALUE;
                     }
                 }
@@ -1806,120 +1838,27 @@ static int apply_config_from_json(const char *json_text)
                 }
             }
             
-            /* Créer et configurer le Trendlog */
+            /* Affichage et création */
             printf("\n========================================\n");
-            printf("Trendlog %u: %s\n", inst, name ? name : "(no name)");
+            printf("Trendlog %u: %s\n", tl_instance, tl_name ? tl_name : "(no name)");
             printf("========================================\n");
             printf("  Description: %s\n", tl_desc);
             printf("  Source: %s[%u]\n", 
                    bactext_object_type_name(source_type), source_instance);
             printf("  Interval: %u seconds\n", log_interval);
+            printf("  Trigger: %s\n", trigger_type);
             printf("  Enabled: %s\n", tl_enable ? "YES" : "NO");
             
-            if (create_trendlog(inst, name, source_type, source_instance,
+            /* Créer et configurer le Trendlog */
+            if (create_trendlog(tl_instance, tl_name, source_type, source_instance,
                                log_interval, buffer_size, tl_enable)) {
-                printf("✓ Trendlog %u configured successfully\n", inst);
+                printf("✓ Trendlog %u configured successfully\n", tl_instance);
             } else {
-                printf("✗ Failed to configure Trendlog %u\n", inst);
+                printf("✗ Failed to configure Trendlog %u\n", tl_instance);
             }
             printf("========================================\n");
         }
-    /*trendlogs = json_object_get(root, "trendlogs");
-    if (trendlogs && json_is_array(trendlogs)) {
-        size_t tl_idx, tl_count = json_array_size(trendlogs);
-        
-     printf("Creating %lu Trendlog(s)...\n", (unsigned long)tl_count);
-        
-        for (tl_idx = 0; tl_idx < tl_count; tl_idx++) {
-            json_t *tl_item = json_array_get(trendlogs, tl_idx);
-            json_t *j_instance, *j_name, *j_desc, *j_enable;
-            json_t *j_linked, *j_interval, *j_buffer;
-            json_t *j_trigger, *j_cov, *j_stop_full, *j_align;
-            
-            uint32_t tl_instance;
-            const char *tl_name, *tl_desc;
-            bool tl_enable;
-            uint32_t log_interval, buffer_size;
-            const char *trigger_type;
-            
-            BACNET_OBJECT_TYPE source_type = OBJECT_ANALOG_VALUE;
-            uint32_t source_instance = 0;
-            
-            j_instance = json_object_get(tl_item, "instance");
-            j_name = json_object_get(tl_item, "name");
-            j_desc = json_object_get(tl_item, "description");
-            j_enable = json_object_get(tl_item, "enable");
-            j_linked = json_object_get(tl_item, "linked_object");
-            j_interval = json_object_get(tl_item, "log_interval");
-            j_buffer = json_object_get(tl_item, "buffer_size");
-            j_trigger = json_object_get(tl_item, "trigger_type");
-            j_cov = json_object_get(tl_item, "cov_increment");
-            j_stop_full = json_object_get(tl_item, "stop_when_full");
-            j_align = json_object_get(tl_item, "align_intervals");
-            
-            if (!j_instance || !j_name) {
-                printf("  Trendlog %lu: missing instance or name, skipped\n", 
-                       (unsigned long)tl_idx);
-                continue;
-            }
-            
-            tl_instance = (uint32_t)json_integer_value(j_instance);
-            tl_name = json_string_value(j_name);
-            tl_desc = j_desc ? json_string_value(j_desc) : "";
-            tl_enable = j_enable ? json_boolean_value(j_enable) : true;
-            log_interval = j_interval ? (uint32_t)json_integer_value(j_interval) : 300;
-            buffer_size = j_buffer ? (uint32_t)json_integer_value(j_buffer) : 100;
-            trigger_type = j_trigger ? json_string_value(j_trigger) : "PERIODIC";
-
-            (void)j_cov;       /* TODO: Implémenter COV increment */
-            (void)j_stop_full; /* TODO: Implémenter stop when full */
-            (void)j_align; 
-            
-            if (j_linked && json_is_object(j_linked)) {
-                json_t *j_type = json_object_get(j_linked, "type");
-                json_t *j_obj_inst = json_object_get(j_linked, "instance");
-                
-                if (j_type && json_is_string(j_type)) {
-                    const char *type_str = json_string_value(j_type);
-                    
-                    if (strcmp(type_str, "ANALOG_VALUE") == 0) {
-                        source_type = OBJECT_ANALOG_VALUE;
-                    } else if (strcmp(type_str, "ANALOG_INPUT") == 0) {
-                        source_type = OBJECT_ANALOG_INPUT;
-                    } else if (strcmp(type_str, "BINARY_VALUE") == 0) {
-                        source_type = OBJECT_BINARY_VALUE;
-                    } else if (strcmp(type_str, "BINARY_INPUT") == 0) {
-                        source_type = OBJECT_BINARY_INPUT;
-                    } else if (strcmp(type_str, "MULTI_STATE_VALUE") == 0) {
-                        source_type = OBJECT_MULTI_STATE_VALUE;
-                    }
-                }
-                
-                if (j_obj_inst) {
-                    source_instance = (uint32_t)json_integer_value(j_obj_inst);
-                }
-            }
-            
-            printf("\nTrendlog %u: %s\n", tl_instance, tl_name);
-            printf("  Description: %s\n", tl_desc);
-            printf("  Trigger: %s, Interval: %u sec, Buffer: %u\n", 
-                   trigger_type, log_interval, buffer_size);
-            
-            if (create_trendlog(tl_instance, tl_name, source_type, source_instance,
-                               log_interval, buffer_size, tl_enable)) {
-                
-                printf("  Trendlog %u created successfully\n", tl_instance);
-            } else {
-                printf("  Failed to create Trendlog %u\n", tl_instance);
-            }
-        }
-        
-        printf("========== Trendlogs Created ==========\n\n");
-    }*/
-
-
-    
-
+}
     json_decref(root);
     printf("Object creation complete.\n");
     printf("  AI: %u, AO: %u, AV: %u\n", 
@@ -1939,7 +1878,7 @@ static int apply_config_from_json(const char *json_text)
     
     return 0;
 }
-}
+
 
 /* ===== Socket utilitaires ===== */
 static int socket_listen_local(int port)
