@@ -1673,6 +1673,7 @@ static int apply_config_from_json(const char *json_text)
     
     return 0;
 }
+}
 
 /* ===== Socket utilitaires ===== */
 static int socket_listen_local(int port)
