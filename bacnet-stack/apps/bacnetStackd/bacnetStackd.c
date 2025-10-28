@@ -54,6 +54,7 @@
 #include "bacnet/version.h"
 #include "bacnet/basic/sys/mstimer.h"
 #include "bacnet/basic/tsm/tsm.h"
+#include "trendlog_manager.h"
 
 extern SCHEDULE_DESCR Schedule_Descr[MAX_SCHEDULES];
 
@@ -101,6 +102,8 @@ static struct mstimer Schedule_PV_Timer;
 static struct mstimer BACNET_TSM_Timer;
 static struct mstimer BACNET_Address_Timer;
 static struct mstimer Config_Save_Timer;
+static pthread_t trendlog_thread;
+static bool trendlog_thread_running = false;
 
 /* Helper function to set object name */
 static bool set_object_name(BACNET_OBJECT_TYPE obj_type, uint32_t instance, const char *name)
@@ -162,6 +165,256 @@ static void sig_handler(int sig) {
     printf("Signal %d received, shutting down...\n", sig);
     fflush(stdout);
     g_shutdown = 1;
+}
+
+
+/* ===== Trendlog Thread ===== */
+static void *trendlog_periodic_thread(void *arg)
+{
+    (void)arg;
+    printf("[TrendLog] Thread périodique démarré\n");
+    
+    while (trendlog_thread_running) {
+        TrendLog_Process_Periodic();
+        sleep(1);  // Vérifie chaque seconde
+    }
+    
+    printf("[TrendLog] Thread périodique arrêté\n");
+    return NULL;
+}
+
+static void start_trendlog_thread(void)
+{
+    if (!trendlog_thread_running) {
+        trendlog_thread_running = true;
+        if (pthread_create(&trendlog_thread, NULL, trendlog_periodic_thread, NULL) != 0) {
+            fprintf(stderr, "[TrendLog] Erreur lors de la création du thread\n");
+            trendlog_thread_running = false;
+        }
+    }
+}
+
+static void stop_trendlog_thread(void)
+{
+    if (trendlog_thread_running) {
+        trendlog_thread_running = false;
+        pthread_join(trendlog_thread, NULL);
+    }
+}
+
+static void cleanup_trendlogs_on_exit(void)
+{
+    printf("\n[TrendLog] Arrêt et nettoyage...\n");
+    stop_trendlog_thread();
+    
+    /* Export optionnel avant arrêt */
+    unsigned count = TrendLog_Count();
+    for (unsigned i = 0; i < count; i++) {
+        uint32_t instance = TrendLog_Index_To_Instance(i);
+        char filename[256];
+        snprintf(filename, sizeof(filename), 
+                 "/tmp/trendlog_%u_shutdown.csv", instance);
+        TrendLog_Export_CSV(instance, filename);
+    }
+    
+    TrendLog_Clear_All();
+    printf("[TrendLog] Nettoyage terminé\n");
+}
+
+/* ===== Trendlog Command Handler ===== */
+static char *handle_trendlog_command(json_t *root)
+{
+    json_t *response = json_object();
+    const char *command = json_string_value(json_object_get(root, "command"));
+    
+    if (!command) {
+        json_object_set_new(response, "status", json_string("error"));
+        json_object_set_new(response, "message", json_string("Commande manquante"));
+        goto end;
+    }
+    
+    /* Commande: trendlog_load_config */
+    if (strcmp(command, "trendlog_load_config") == 0) {
+        json_t *config_item = json_object_get(root, "config");
+        if (!config_item || !json_is_string(config_item)) {
+            json_object_set_new(response, "status", json_string("error"));
+            json_object_set_new(response, "message", json_string("Config JSON manquante"));
+            goto end;
+        }
+        
+        const char *config_json = json_string_value(config_item);
+        if (TrendLog_Load_Config(config_json)) {
+            json_object_set_new(response, "status", json_string("success"));
+            json_object_set_new(response, "message", json_string("Configuration chargée"));
+        } else {
+            json_object_set_new(response, "status", json_string("error"));
+            json_object_set_new(response, "message", json_string("Erreur de chargement"));
+        }
+    }
+    
+    /* Commande: trendlog_get_data */
+    else if (strcmp(command, "trendlog_get_data") == 0) {
+        json_t *instance_item = json_object_get(root, "instance");
+        if (!instance_item || !json_is_integer(instance_item)) {
+            json_object_set_new(response, "status", json_string("error"));
+            json_object_set_new(response, "message", json_string("Instance manquante"));
+            goto end;
+        }
+        
+        uint32_t instance = (uint32_t)json_integer_value(instance_item);
+        uint32_t record_count = TrendLog_Get_Record_Count(instance);
+        
+        json_t *data = json_object();
+        json_object_set_new(data, "instance", json_integer(instance));
+        json_object_set_new(data, "record_count", json_integer(record_count));
+        
+        json_t *records = json_array();
+        for (uint32_t i = 0; i < record_count; i++) {
+            TRENDLOG_RECORD record;
+            if (TrendLog_Get_Record(instance, i, &record)) {
+                json_t *rec = json_object();
+                
+                char timestamp[32];
+                snprintf(timestamp, sizeof(timestamp), "%04d-%02d-%02d %02d:%02d:%02d",
+                        record.timestamp.date.year,
+                        record.timestamp.date.month,
+                        record.timestamp.date.day,
+                        record.timestamp.time.hour,
+                        record.timestamp.time.min,
+                        record.timestamp.time.sec);
+                
+                json_object_set_new(rec, "timestamp", json_string(timestamp));
+                json_object_set_new(rec, "value", json_real(record.value));
+                json_object_set_new(rec, "status_flags", json_integer(record.status_flags));
+                
+                json_array_append_new(records, rec);
+            }
+        }
+        
+        json_object_set_new(data, "records", records);
+        json_object_set_new(response, "data", data);
+        json_object_set_new(response, "status", json_string("success"));
+    }
+    
+    /* Commande: trendlog_export_csv */
+    else if (strcmp(command, "trendlog_export_csv") == 0) {
+        json_t *instance_item = json_object_get(root, "instance");
+        json_t *filepath_item = json_object_get(root, "filepath");
+        
+        if (!instance_item || !filepath_item) {
+            json_object_set_new(response, "status", json_string("error"));
+            json_object_set_new(response, "message", json_string("Paramètres manquants"));
+            goto end;
+        }
+        
+        uint32_t instance = (uint32_t)json_integer_value(instance_item);
+        const char *filepath = json_string_value(filepath_item);
+        
+        if (TrendLog_Export_CSV(instance, filepath)) {
+            json_object_set_new(response, "status", json_string("success"));
+            json_object_set_new(response, "message", json_string("Export réussi"));
+        } else {
+            json_object_set_new(response, "status", json_string("error"));
+            json_object_set_new(response, "message", json_string("Erreur d'export"));
+        }
+    }
+    
+    /* Commande: trendlog_clear_buffer */
+    else if (strcmp(command, "trendlog_clear_buffer") == 0) {
+        json_t *instance_item = json_object_get(root, "instance");
+        if (!instance_item) {
+            json_object_set_new(response, "status", json_string("error"));
+            json_object_set_new(response, "message", json_string("Instance manquante"));
+            goto end;
+        }
+        
+        uint32_t instance = (uint32_t)json_integer_value(instance_item);
+        TrendLog_Clear_Buffer(instance);
+        
+        json_object_set_new(response, "status", json_string("success"));
+        json_object_set_new(response, "message", json_string("Buffer vidé"));
+    }
+    
+    /* Commande: trendlog_set_enable */
+    else if (strcmp(command, "trendlog_set_enable") == 0) {
+        json_t *instance_item = json_object_get(root, "instance");
+        json_t *enable_item = json_object_get(root, "enable");
+        
+        if (!instance_item || !enable_item) {
+            json_object_set_new(response, "status", json_string("error"));
+            json_object_set_new(response, "message", json_string("Paramètres manquants"));
+            goto end;
+        }
+        
+        uint32_t instance = (uint32_t)json_integer_value(instance_item);
+        bool enable = json_is_true(enable_item);
+        
+        TrendLog_Set_Enable(instance, enable);
+        
+        json_object_set_new(response, "status", json_string("success"));
+        json_object_set_new(response, "message", json_string(enable ? "Activé" : "Désactivé"));
+    }
+    
+    /* Commande: trendlog_record_value */
+    else if (strcmp(command, "trendlog_record_value") == 0) {
+        json_t *instance_item = json_object_get(root, "instance");
+        json_t *value_item = json_object_get(root, "value");
+        json_t *status_item = json_object_get(root, "status_flags");
+        
+        if (!instance_item || !value_item) {
+            json_object_set_new(response, "status", json_string("error"));
+            json_object_set_new(response, "message", json_string("Paramètres manquants"));
+            goto end;
+        }
+        
+        uint32_t instance = (uint32_t)json_integer_value(instance_item);
+        float value = (float)json_real_value(value_item);
+        uint8_t status_flags = status_item ? (uint8_t)json_integer_value(status_item) : 0;
+        
+        if (TrendLog_Record_Value(instance, value, status_flags)) {
+            json_object_set_new(response, "status", json_string("success"));
+        } else {
+            json_object_set_new(response, "status", json_string("error"));
+            json_object_set_new(response, "message", json_string("Erreur d'enregistrement"));
+        }
+    }
+    
+    /* Commande: trendlog_process_cov */
+    else if (strcmp(command, "trendlog_process_cov") == 0) {
+        json_t *type_item = json_object_get(root, "object_type");
+        json_t *instance_item = json_object_get(root, "object_instance");
+        json_t *value_item = json_object_get(root, "value");
+        
+        if (!type_item || !instance_item || !value_item) {
+            json_object_set_new(response, "status", json_string("error"));
+            json_object_set_new(response, "message", json_string("Paramètres manquants"));
+            goto end;
+        }
+        
+        BACNET_OBJECT_TYPE object_type = (BACNET_OBJECT_TYPE)json_integer_value(type_item);
+        uint32_t object_instance = (uint32_t)json_integer_value(instance_item);
+        float value = (float)json_real_value(value_item);
+        
+        TrendLog_Process_COV(object_type, object_instance, value);
+        
+        json_object_set_new(response, "status", json_string("success"));
+    }
+    
+    /* Commande: trendlog_get_status */
+    else if (strcmp(command, "trendlog_get_status") == 0) {
+        TrendLog_Print_Status();
+        json_object_set_new(response, "status", json_string("success"));
+    }
+    
+    else {
+        json_object_set_new(response, "status", json_string("error"));
+        json_object_set_new(response, "message", json_string("Commande Trendlog inconnue"));
+    }
+    
+end:
+    char *response_str = json_dumps(response, JSON_COMPACT);
+    json_decref(response);
+    return response_str;
 }
 
 /* Custom Object Table */
@@ -1546,6 +1799,104 @@ else if (strcmp(typ, "schedule") == 0) {
     printf("  MSI: %u, MSO: %u, MSV: %u\n", 
            Multistate_Input_Count(), Multistate_Output_Count(), Multistate_Value_Count());
     printf("  SCH: %u\n", Schedule_Count());
+    root = json_loads(json_text, 0, &jerr);  // Recharger le JSON
+    if (root) {
+        json_t *trendlogs = json_object_get(root, "trendlogs");
+        
+        if (trendlogs && json_is_array(trendlogs)) {
+            size_t tl_count = json_array_size(trendlogs);
+            printf("\n========== Configuration Trendlogs ==========\n");
+            printf("Loading %zu Trendlog(s)...\n", tl_count);
+            
+            for (size_t i = 0; i < tl_count; i++) {
+                json_t *tl = json_array_get(trendlogs, i);
+                
+                TRENDLOG_CONFIG config = {0};
+                
+                json_t *j_instance = json_object_get(tl, "instance");
+                json_t *j_name = json_object_get(tl, "name");
+                json_t *j_desc = json_object_get(tl, "description");
+                json_t *j_enable = json_object_get(tl, "enable");
+                json_t *j_trigger = json_object_get(tl, "trigger_type");
+                json_t *j_interval = json_object_get(tl, "log_interval");
+                json_t *j_buffer = json_object_get(tl, "buffer_size");
+                json_t *j_cov = json_object_get(tl, "cov_increment");
+                json_t *j_linked = json_object_get(tl, "linked_object");
+                
+                if (!j_instance || !j_name || !j_linked) {
+                    printf("  Trendlog %zu: missing required fields, skipped\n", i);
+                    continue;
+                }
+                
+                config.instance = (uint32_t)json_integer_value(j_instance);
+                strncpy(config.name, json_string_value(j_name), sizeof(config.name)-1);
+                
+                if (j_desc) {
+                    strncpy(config.description, json_string_value(j_desc), 
+                           sizeof(config.description)-1);
+                }
+                
+                config.enable = j_enable ? json_boolean_value(j_enable) : true;
+                config.log_interval = j_interval ? (uint32_t)json_integer_value(j_interval) : 300;
+                config.buffer_size = j_buffer ? (uint32_t)json_integer_value(j_buffer) : 2016;
+                config.cov_increment = j_cov ? (float)json_real_value(j_cov) : 0.5;
+                
+                /* Parse trigger type */
+                if (j_trigger && json_is_string(j_trigger)) {
+                    const char *trigger = json_string_value(j_trigger);
+                    if (strcmp(trigger, "PERIODIC") == 0) {
+                        config.trigger_type = TRENDLOG_TRIGGER_PERIODIC;
+                    } else if (strcmp(trigger, "COV") == 0) {
+                        config.trigger_type = TRENDLOG_TRIGGER_COV;
+                    } else {
+                        config.trigger_type = TRENDLOG_TRIGGER_TRIGGERED;
+                    }
+                } else {
+                    config.trigger_type = TRENDLOG_TRIGGER_PERIODIC;
+                }
+                
+                /* Parse linked object */
+                if (json_is_object(j_linked)) {
+                    json_t *j_type = json_object_get(j_linked, "type");
+                    json_t *j_obj_inst = json_object_get(j_linked, "instance");
+                    
+                    if (j_type && json_is_string(j_type)) {
+                        const char *type_str = json_string_value(j_type);
+                        
+                        if (strcmp(type_str, "ANALOG_VALUE") == 0) {
+                            config.linked_object_type = OBJECT_ANALOG_VALUE;
+                        } else if (strcmp(type_str, "ANALOG_INPUT") == 0) {
+                            config.linked_object_type = OBJECT_ANALOG_INPUT;
+                        } else if (strcmp(type_str, "BINARY_VALUE") == 0) {
+                            config.linked_object_type = OBJECT_BINARY_VALUE;
+                        } else if (strcmp(type_str, "BINARY_INPUT") == 0) {
+                            config.linked_object_type = OBJECT_BINARY_INPUT;
+                        } else if (strcmp(type_str, "MULTI_STATE_VALUE") == 0) {
+                            config.linked_object_type = OBJECT_MULTI_STATE_VALUE;
+                        }
+                    }
+                    
+                    if (j_obj_inst) {
+                        config.linked_object_instance = (uint32_t)json_integer_value(j_obj_inst);
+                    }
+                }
+                
+                /* Ajoute le Trendlog */
+                if (TrendLog_Add(&config)) {
+                    printf("  Trendlog %u (%s) added successfully\n", 
+                           config.instance, config.name);
+                } else {
+                    printf("  Trendlog %u (%s) failed to add\n", 
+                           config.instance, config.name);
+                }
+            }
+            
+            printf("Trendlog configuration complete: %u active\n", TrendLog_Count());
+            printf("==============================================\n\n");
+        }
+        
+        json_decref(root);
+    }
     fflush(stdout);
     
     save_current_config();
@@ -1666,6 +2017,28 @@ static int handle_socket_line(const char *line)
         (void)write(g_client_fd, buf, strlen(buf));
         return 0;
     }
+    else if (strncmp(line, "TRENDLOG ", 9) == 0) {
+        const char *json_str = line + 9;
+        
+        json_error_t error;
+        json_t *root = json_loads(json_str, 0, &error);
+        
+        if (!root) {
+            (void)write(g_client_fd, "ERR Invalid JSON\n", 17);
+            return 0;
+        }
+        
+        char *response = handle_trendlog_command(root);
+        if (response) {
+            write(g_client_fd, response, strlen(response));
+            write(g_client_fd, "\n", 1);
+            free(response);
+        }
+        
+        json_decref(root);
+        return 0;
+    }
+
     (void)write(g_client_fd, "ERR unknown\n", 12);
     return 0;
 }
@@ -1836,6 +2209,12 @@ int main(int argc, char *argv[])
     Device_Object_Name_ANSI_Init(device_name);
     snprintf(buf, sizeof(buf), "Device Name: %s", device_name);
     print_timestamp_log(buf);
+
+     printf("\n========== Initialisation Trendlog Manager ==========\n");
+    TrendLog_Manager_Init();
+    start_trendlog_thread();
+    printf("Trendlog Manager initialized\n");
+    printf("====================================================\n\n");
 
     g_listen_fd = socket_listen_local(g_socket_port);
     if (g_listen_fd >= 0) {
