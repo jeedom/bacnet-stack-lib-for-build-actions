@@ -156,15 +156,18 @@ static bool create_trendlog(uint32_t instance, const char *name,
                            uint32_t buffer_size,
                            bool enable)
 {
-    BACNET_WRITE_PROPERTY_DATA wp_data = {0};
-    BACNET_APPLICATION_DATA_VALUE value = {0};
-    uint8_t apdu[MAX_APDU] = {0};
+    BACNET_WRITE_PROPERTY_DATA wp_data;
+    BACNET_APPLICATION_DATA_VALUE value;
+    BACNET_DEVICE_OBJECT_PROPERTY_REFERENCE source_ref;
+    uint8_t apdu[MAX_APDU];
     int len;
-    bool success = true;
+    bool success;
     
     (void)buffer_size;  /* BUFFER_SIZE est read-only dans la librairie */
     
-    /* Vérifier que l'instance existe (0 à MAX_TREND_LOGS-1) */
+    success = true;
+    
+    /* Vérifier que l'instance existe */
     if (!Trend_Log_Valid_Instance(instance)) {
         fprintf(stderr, "ERROR: Trendlog instance %u not valid (MAX_TREND_LOGS limit)\n", instance);
         fprintf(stderr, "       Check that instance < MAX_TREND_LOGS in your Makefile\n");
@@ -175,70 +178,71 @@ static bool create_trendlog(uint32_t instance, const char *name,
     printf("Configuring Trendlog %u: %s\n", instance, name ? name : "(no name)");
     printf("═══════════════════════════════════════════════════════\n");
     
+    /* Initialiser les structures */
+    memset(&wp_data, 0, sizeof(wp_data));
+    memset(&value, 0, sizeof(value));
+    memset(&source_ref, 0, sizeof(source_ref));
+    memset(apdu, 0, sizeof(apdu));
+    
     /* ========================================
      * 1. Configurer l'objet source à logger
      *    (LOG_DEVICE_OBJECT_PROPERTY)
      * ========================================*/
-    {
-        BACNET_DEVICE_OBJECT_PROPERTY_REFERENCE source_ref = {0};
-        
-        /* Objet source */
-        source_ref.objectIdentifier.type = source_type;
-        source_ref.objectIdentifier.instance = source_instance;
-        source_ref.propertyIdentifier = PROP_PRESENT_VALUE;
-        source_ref.arrayIndex = BACNET_ARRAY_ALL;
-        
-        /* Device local */
-        source_ref.deviceIdentifier.type = OBJECT_DEVICE;
-        source_ref.deviceIdentifier.instance = Device_Object_Instance_Number();
-        
-        /* Encoder la référence */
-        len = bacnet_device_object_property_reference_encode(apdu, &source_ref);
-        if (len <= 0) {
-            fprintf(stderr, "  ✗ Failed to encode LOG_DEVICE_OBJECT_PROPERTY\n");
-            return false;
-        }
-        
-        /* Préparer le Write Property */
-        wp_data.object_type = OBJECT_TRENDLOG;
-        wp_data.object_instance = instance;
-        wp_data.object_property = PROP_LOG_DEVICE_OBJECT_PROPERTY;
-        wp_data.array_index = BACNET_ARRAY_ALL;
-        wp_data.application_data = apdu;
-        wp_data.application_data_len = len;
-        
-        /* Écrire la propriété */
-        if (!Trend_Log_Write_Property(&wp_data)) {
-            fprintf(stderr, "  ✗ Failed to set LOG_DEVICE_OBJECT_PROPERTY\n");
-            fprintf(stderr, "    Error: class=%d code=%d\n", 
-                    wp_data.error_class, wp_data.error_code);
-            success = false;
-        } else {
-            printf("  ✓ Linked to: %s[%u].PRESENT_VALUE\n", 
-                   bactext_object_type_name(source_type), source_instance);
-        }
+    
+    /* Préparer la référence à l'objet source */
+    source_ref.objectIdentifier.type = source_type;
+    source_ref.objectIdentifier.instance = source_instance;
+    source_ref.propertyIdentifier = PROP_PRESENT_VALUE;
+    source_ref.arrayIndex = BACNET_ARRAY_ALL;
+    
+    /* Device local */
+    source_ref.deviceIdentifier.type = OBJECT_DEVICE;
+    source_ref.deviceIdentifier.instance = Device_Object_Instance_Number();
+    
+    /* Encoder la référence - CORRECTION : Utiliser la bonne fonction */
+    len = bacapp_encode_device_obj_property_ref(apdu, &source_ref);
+    if (len <= 0) {
+        fprintf(stderr, "  ✗ Failed to encode LOG_DEVICE_OBJECT_PROPERTY\n");
+        return false;
+    }
+    
+    /* Préparer le Write Property */
+    wp_data.object_type = OBJECT_TRENDLOG;
+    wp_data.object_instance = instance;
+    wp_data.object_property = PROP_LOG_DEVICE_OBJECT_PROPERTY;
+    wp_data.array_index = BACNET_ARRAY_ALL;
+    wp_data.application_data = apdu;  /* apdu est déjà un pointeur (uint8_t *) */
+    wp_data.application_data_len = len;
+    
+    /* Écrire la propriété */
+    if (!Trend_Log_Write_Property(&wp_data)) {
+        fprintf(stderr, "  ✗ Failed to set LOG_DEVICE_OBJECT_PROPERTY\n");
+        fprintf(stderr, "    Error: class=%d code=%d\n", 
+                wp_data.error_class, wp_data.error_code);
+        success = false;
+    } else {
+        printf("  ✓ Linked to: %s[%u].PRESENT_VALUE\n", 
+               bactext_object_type_name(source_type), source_instance);
     }
     
     /* ========================================
      * 2. Configurer le type de logging
      *    (LOGGING_TYPE: POLLED ou TRIGGERED)
      * ========================================*/
-    {
-        value.tag = BACNET_APPLICATION_TAG_ENUMERATED;
-        value.type.Enumerated = LOGGING_TYPE_POLLED;  /* Periodic logging */
-        
-        len = bacapp_encode_application_data(apdu, &value);
-        
-        wp_data.object_property = PROP_LOGGING_TYPE;
-        wp_data.application_data = apdu;
-        wp_data.application_data_len = len;
-        
-        if (!Trend_Log_Write_Property(&wp_data)) {
-            fprintf(stderr, "  ✗ Failed to set LOGGING_TYPE\n");
-            success = false;
-        } else {
-            printf("  ✓ Logging Type: POLLED\n");
-        }
+    memset(&value, 0, sizeof(value));
+    value.tag = BACNET_APPLICATION_TAG_ENUMERATED;
+    value.type.Enumerated = LOGGING_TYPE_POLLED;  /* Periodic logging */
+    
+    len = bacapp_encode_application_data(apdu, &value);
+    
+    wp_data.object_property = PROP_LOGGING_TYPE;
+    wp_data.application_data_len = len;
+    
+    if (!Trend_Log_Write_Property(&wp_data)) {
+        fprintf(stderr, "  ✗ Failed to set LOGGING_TYPE\n");
+        success = false;
+    } else {
+        printf("  ✓ Logging Type: POLLED\n");
     }
     
     /* ========================================
@@ -246,6 +250,7 @@ static bool create_trendlog(uint32_t instance, const char *name,
      *    (LOG_INTERVAL en centisecondes)
      * ========================================*/
     if (log_interval > 0) {
+        memset(&value, 0, sizeof(value));
         value.tag = BACNET_APPLICATION_TAG_UNSIGNED_INT;
         /* Convertir secondes en centisecondes (x100) */
         value.type.Unsigned_Int = log_interval * 100;
@@ -253,7 +258,6 @@ static bool create_trendlog(uint32_t instance, const char *name,
         len = bacapp_encode_application_data(apdu, &value);
         
         wp_data.object_property = PROP_LOG_INTERVAL;
-        wp_data.application_data = apdu;
         wp_data.application_data_len = len;
         
         if (!Trend_Log_Write_Property(&wp_data)) {
@@ -269,86 +273,78 @@ static bool create_trendlog(uint32_t instance, const char *name,
      * 4. Configurer l'alignement des intervalles
      *    (ALIGN_INTERVALS)
      * ========================================*/
-    {
-        value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
-        value.type.Boolean = true;  /* Aligner sur l'horloge système */
-        
-        len = bacapp_encode_application_data(apdu, &value);
-        
-        wp_data.object_property = PROP_ALIGN_INTERVALS;
-        wp_data.application_data = apdu;
-        wp_data.application_data_len = len;
-        
-        if (!Trend_Log_Write_Property(&wp_data)) {
-            fprintf(stderr, "  ✗ Failed to set ALIGN_INTERVALS\n");
-            success = false;
-        } else {
-            printf("  ✓ Align Intervals: YES (clock-aligned)\n");
-        }
+    memset(&value, 0, sizeof(value));
+    value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
+    value.type.Boolean = true;  /* Aligner sur l'horloge système */
+    
+    len = bacapp_encode_application_data(apdu, &value);
+    
+    wp_data.object_property = PROP_ALIGN_INTERVALS;
+    wp_data.application_data_len = len;
+    
+    if (!Trend_Log_Write_Property(&wp_data)) {
+        fprintf(stderr, "  ✗ Failed to set ALIGN_INTERVALS\n");
+        success = false;
+    } else {
+        printf("  ✓ Align Intervals: YES (clock-aligned)\n");
     }
     
     /* ========================================
      * 5. Configurer STOP_WHEN_FULL
      * ========================================*/
-    {
-        value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
-        value.type.Boolean = false;  /* Mode circulaire (écrase anciennes données) */
-        
-        len = bacapp_encode_application_data(apdu, &value);
-        
-        wp_data.object_property = PROP_STOP_WHEN_FULL;
-        wp_data.application_data = apdu;
-        wp_data.application_data_len = len;
-        
-        if (!Trend_Log_Write_Property(&wp_data)) {
-            fprintf(stderr, "  ✗ Failed to set STOP_WHEN_FULL\n");
-            success = false;
-        } else {
-            printf("  ✓ Stop When Full: NO (circular buffer)\n");
-        }
+    memset(&value, 0, sizeof(value));
+    value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
+    value.type.Boolean = false;  /* Mode circulaire (écrase anciennes données) */
+    
+    len = bacapp_encode_application_data(apdu, &value);
+    
+    wp_data.object_property = PROP_STOP_WHEN_FULL;
+    wp_data.application_data_len = len;
+    
+    if (!Trend_Log_Write_Property(&wp_data)) {
+        fprintf(stderr, "  ✗ Failed to set STOP_WHEN_FULL\n");
+        success = false;
+    } else {
+        printf("  ✓ Stop When Full: NO (circular buffer)\n");
     }
     
     /* ========================================
      * 6. Effacer le buffer (mettre RECORD_COUNT à 0)
      * ========================================*/
-    {
-        value.tag = BACNET_APPLICATION_TAG_UNSIGNED_INT;
-        value.type.Unsigned_Int = 0;  /* Effacer le buffer */
-        
-        len = bacapp_encode_application_data(apdu, &value);
-        
-        wp_data.object_property = PROP_RECORD_COUNT;
-        wp_data.application_data = apdu;
-        wp_data.application_data_len = len;
-        
-        if (!Trend_Log_Write_Property(&wp_data)) {
-            fprintf(stderr, "  ✗ Failed to clear RECORD_COUNT\n");
-            success = false;
-        } else {
-            printf("  ✓ Buffer cleared (RECORD_COUNT = 0)\n");
-        }
+    memset(&value, 0, sizeof(value));
+    value.tag = BACNET_APPLICATION_TAG_UNSIGNED_INT;
+    value.type.Unsigned_Int = 0;  /* Effacer le buffer */
+    
+    len = bacapp_encode_application_data(apdu, &value);
+    
+    wp_data.object_property = PROP_RECORD_COUNT;
+    wp_data.application_data_len = len;
+    
+    if (!Trend_Log_Write_Property(&wp_data)) {
+        fprintf(stderr, "  ✗ Failed to clear RECORD_COUNT\n");
+        success = false;
+    } else {
+        printf("  ✓ Buffer cleared (RECORD_COUNT = 0)\n");
     }
     
     /* ========================================
      * 7. IMPORTANT: Activer le Trendlog EN DERNIER
      *    (ENABLE) - doit être fait après toutes les autres configs
      * ========================================*/
-    {
-        value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
-        value.type.Boolean = enable;
-        
-        len = bacapp_encode_application_data(apdu, &value);
-        
-        wp_data.object_property = PROP_ENABLE;
-        wp_data.application_data = apdu;
-        wp_data.application_data_len = len;
-        
-        if (!Trend_Log_Write_Property(&wp_data)) {
-            fprintf(stderr, "  ✗ Failed to set ENABLE\n");
-            success = false;
-        } else {
-            printf("  ✓ Enabled: %s\n", enable ? "YES ✓" : "NO");
-        }
+    memset(&value, 0, sizeof(value));
+    value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
+    value.type.Boolean = enable;
+    
+    len = bacapp_encode_application_data(apdu, &value);
+    
+    wp_data.object_property = PROP_ENABLE;
+    wp_data.application_data_len = len;
+    
+    if (!Trend_Log_Write_Property(&wp_data)) {
+        fprintf(stderr, "  ✗ Failed to set ENABLE\n");
+        success = false;
+    } else {
+        printf("  ✓ Enabled: %s\n", enable ? "YES ✓" : "NO");
     }
     
     /* ========================================
@@ -2493,6 +2489,11 @@ static int handle_cmd_trendlog_clear(uint32_t instance)
 
 static int handle_socket_line(const char *line)
 {
+    char cmd[64];
+    
+    if (sscanf(line, "%63s", cmd) != 1) {
+        return 0;
+    }
     if (strncmp(line, "PING", 4) == 0) {
         (void)write(g_client_fd, "PONG\n", 5);
         return 0;
