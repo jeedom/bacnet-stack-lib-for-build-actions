@@ -159,18 +159,16 @@ static bool create_trendlog(uint32_t instance, const char *name,
     BACNET_WRITE_PROPERTY_DATA wp_data;
     BACNET_APPLICATION_DATA_VALUE value;
     BACNET_DEVICE_OBJECT_PROPERTY_REFERENCE source_ref;
-    uint8_t apdu[MAX_APDU];
     int len;
     bool success;
     
-    (void)buffer_size;  /* BUFFER_SIZE est read-only dans la librairie */
+    (void)buffer_size;  /* BUFFER_SIZE est read-only */
     
     success = true;
     
-    /* Vérifier que l'instance existe */
+    /* Vérifier l'instance */
     if (!Trend_Log_Valid_Instance(instance)) {
-        fprintf(stderr, "ERROR: Trendlog instance %u not valid (MAX_TREND_LOGS limit)\n", instance);
-        fprintf(stderr, "       Check that instance < MAX_TREND_LOGS in your Makefile\n");
+        fprintf(stderr, "ERROR: Trendlog instance %u not valid\n", instance);
         return false;
     }
     
@@ -182,39 +180,32 @@ static bool create_trendlog(uint32_t instance, const char *name,
     memset(&wp_data, 0, sizeof(wp_data));
     memset(&value, 0, sizeof(value));
     memset(&source_ref, 0, sizeof(source_ref));
-    memset(apdu, 0, sizeof(apdu));
+    
+    /* Configuration de base du Write Property */
+    wp_data.object_type = OBJECT_TRENDLOG;
+    wp_data.object_instance = instance;
+    wp_data.array_index = BACNET_ARRAY_ALL;
     
     /* ========================================
-     * 1. Configurer l'objet source à logger
-     *    (LOG_DEVICE_OBJECT_PROPERTY)
-     * ========================================*/
-    
-    /* Préparer la référence à l'objet source */
+     * 1. LOG_DEVICE_OBJECT_PROPERTY
+     * ======================================== */
     source_ref.objectIdentifier.type = source_type;
     source_ref.objectIdentifier.instance = source_instance;
     source_ref.propertyIdentifier = PROP_PRESENT_VALUE;
     source_ref.arrayIndex = BACNET_ARRAY_ALL;
-    
-    /* Device local */
     source_ref.deviceIdentifier.type = OBJECT_DEVICE;
     source_ref.deviceIdentifier.instance = Device_Object_Instance_Number();
     
-    /* Encoder la référence - CORRECTION : Utiliser la bonne fonction */
-    len = bacapp_encode_device_obj_property_ref(apdu, &source_ref);
+    /* Encoder directement dans wp_data.application_data */
+    len = bacapp_encode_device_obj_property_ref(wp_data.application_data, &source_ref);
     if (len <= 0) {
         fprintf(stderr, "  ✗ Failed to encode LOG_DEVICE_OBJECT_PROPERTY\n");
         return false;
     }
     
-    /* Préparer le Write Property */
-    wp_data.object_type = OBJECT_TRENDLOG;
-    wp_data.object_instance = instance;
     wp_data.object_property = PROP_LOG_DEVICE_OBJECT_PROPERTY;
-    wp_data.array_index = BACNET_ARRAY_ALL;
-    wp_data.application_data = apdu;  /* apdu est déjà un pointeur (uint8_t *) */
     wp_data.application_data_len = len;
     
-    /* Écrire la propriété */
     if (!Trend_Log_Write_Property(&wp_data)) {
         fprintf(stderr, "  ✗ Failed to set LOG_DEVICE_OBJECT_PROPERTY\n");
         fprintf(stderr, "    Error: class=%d code=%d\n", 
@@ -226,15 +217,13 @@ static bool create_trendlog(uint32_t instance, const char *name,
     }
     
     /* ========================================
-     * 2. Configurer le type de logging
-     *    (LOGGING_TYPE: POLLED ou TRIGGERED)
-     * ========================================*/
+     * 2. LOGGING_TYPE = POLLED
+     * ======================================== */
     memset(&value, 0, sizeof(value));
     value.tag = BACNET_APPLICATION_TAG_ENUMERATED;
-    value.type.Enumerated = LOGGING_TYPE_POLLED;  /* Periodic logging */
+    value.type.Enumerated = LOGGING_TYPE_POLLED;
     
-    len = bacapp_encode_application_data(apdu, &value);
-    
+    len = bacapp_encode_application_data(wp_data.application_data, &value);
     wp_data.object_property = PROP_LOGGING_TYPE;
     wp_data.application_data_len = len;
     
@@ -246,17 +235,14 @@ static bool create_trendlog(uint32_t instance, const char *name,
     }
     
     /* ========================================
-     * 3. Configurer l'intervalle de log
-     *    (LOG_INTERVAL en centisecondes)
-     * ========================================*/
+     * 3. LOG_INTERVAL (en centisecondes)
+     * ======================================== */
     if (log_interval > 0) {
         memset(&value, 0, sizeof(value));
         value.tag = BACNET_APPLICATION_TAG_UNSIGNED_INT;
-        /* Convertir secondes en centisecondes (x100) */
-        value.type.Unsigned_Int = log_interval * 100;
+        value.type.Unsigned_Int = log_interval * 100;  /* Secondes -> centisecondes */
         
-        len = bacapp_encode_application_data(apdu, &value);
-        
+        len = bacapp_encode_application_data(wp_data.application_data, &value);
         wp_data.object_property = PROP_LOG_INTERVAL;
         wp_data.application_data_len = len;
         
@@ -264,21 +250,19 @@ static bool create_trendlog(uint32_t instance, const char *name,
             fprintf(stderr, "  ✗ Failed to set LOG_INTERVAL\n");
             success = false;
         } else {
-            printf("  ✓ Log Interval: %u seconds (%u centiseconds)\n", 
+            printf("  ✓ Log Interval: %u seconds (%u cs)\n", 
                    log_interval, log_interval * 100);
         }
     }
     
     /* ========================================
-     * 4. Configurer l'alignement des intervalles
-     *    (ALIGN_INTERVALS)
-     * ========================================*/
+     * 4. ALIGN_INTERVALS = TRUE
+     * ======================================== */
     memset(&value, 0, sizeof(value));
     value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
-    value.type.Boolean = true;  /* Aligner sur l'horloge système */
+    value.type.Boolean = true;
     
-    len = bacapp_encode_application_data(apdu, &value);
-    
+    len = bacapp_encode_application_data(wp_data.application_data, &value);
     wp_data.object_property = PROP_ALIGN_INTERVALS;
     wp_data.application_data_len = len;
     
@@ -286,18 +270,17 @@ static bool create_trendlog(uint32_t instance, const char *name,
         fprintf(stderr, "  ✗ Failed to set ALIGN_INTERVALS\n");
         success = false;
     } else {
-        printf("  ✓ Align Intervals: YES (clock-aligned)\n");
+        printf("  ✓ Align Intervals: YES\n");
     }
     
     /* ========================================
-     * 5. Configurer STOP_WHEN_FULL
-     * ========================================*/
+     * 5. STOP_WHEN_FULL = FALSE (circulaire)
+     * ======================================== */
     memset(&value, 0, sizeof(value));
     value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
-    value.type.Boolean = false;  /* Mode circulaire (écrase anciennes données) */
+    value.type.Boolean = false;
     
-    len = bacapp_encode_application_data(apdu, &value);
-    
+    len = bacapp_encode_application_data(wp_data.application_data, &value);
     wp_data.object_property = PROP_STOP_WHEN_FULL;
     wp_data.application_data_len = len;
     
@@ -305,18 +288,17 @@ static bool create_trendlog(uint32_t instance, const char *name,
         fprintf(stderr, "  ✗ Failed to set STOP_WHEN_FULL\n");
         success = false;
     } else {
-        printf("  ✓ Stop When Full: NO (circular buffer)\n");
+        printf("  ✓ Stop When Full: NO (circular)\n");
     }
     
     /* ========================================
-     * 6. Effacer le buffer (mettre RECORD_COUNT à 0)
-     * ========================================*/
+     * 6. RECORD_COUNT = 0 (effacer buffer)
+     * ======================================== */
     memset(&value, 0, sizeof(value));
     value.tag = BACNET_APPLICATION_TAG_UNSIGNED_INT;
-    value.type.Unsigned_Int = 0;  /* Effacer le buffer */
+    value.type.Unsigned_Int = 0;
     
-    len = bacapp_encode_application_data(apdu, &value);
-    
+    len = bacapp_encode_application_data(wp_data.application_data, &value);
     wp_data.object_property = PROP_RECORD_COUNT;
     wp_data.application_data_len = len;
     
@@ -328,15 +310,13 @@ static bool create_trendlog(uint32_t instance, const char *name,
     }
     
     /* ========================================
-     * 7. IMPORTANT: Activer le Trendlog EN DERNIER
-     *    (ENABLE) - doit être fait après toutes les autres configs
-     * ========================================*/
+     * 7. ENABLE (EN DERNIER)
+     * ======================================== */
     memset(&value, 0, sizeof(value));
     value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
     value.type.Boolean = enable;
     
-    len = bacapp_encode_application_data(apdu, &value);
-    
+    len = bacapp_encode_application_data(wp_data.application_data, &value);
     wp_data.object_property = PROP_ENABLE;
     wp_data.application_data_len = len;
     
@@ -348,8 +328,8 @@ static bool create_trendlog(uint32_t instance, const char *name,
     }
     
     /* ========================================
-     * Résumé de la configuration
-     * ========================================*/
+     * Résumé
+     * ======================================== */
     if (success) {
         printf("═══════════════════════════════════════════════════════\n");
         printf("✓ Trendlog %u configured successfully\n", instance);
