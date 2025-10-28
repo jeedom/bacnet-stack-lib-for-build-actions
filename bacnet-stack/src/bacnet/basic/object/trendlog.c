@@ -34,6 +34,16 @@
 
 static TL_DATA_REC Logs[MAX_TREND_LOGS][TL_MAX_ENTRIES];
 static TL_LOG_INFO LogInfo[MAX_TREND_LOGS];
+static BACNET_CHARACTER_STRING Trendlog_Names[MAX_TREND_LOGS];
+
+bool Trend_Log_Object_Name_Set(uint32_t instance, char *new_name)
+{
+    bool status = false;
+    if (instance < MAX_TREND_LOGS) {
+        status = characterstring_init_ansi(&Trendlog_Names[instance], new_name);
+    }
+    return status;
+}
 
 /* These three arrays are used by the ReadPropertyMultiple handler */
 static const int Trend_Log_Properties_Required[] = { PROP_OBJECT_IDENTIFIER,

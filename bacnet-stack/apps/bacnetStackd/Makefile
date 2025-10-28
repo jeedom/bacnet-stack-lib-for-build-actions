@@ -59,6 +59,7 @@ CFLAGS_COMMON := -std=gnu89 -Os -Wall -Wextra -pedantic \
                  -DBACAPP_ALL -DBACNET_TIME_MASTER \
                  -DBACNET_PROPERTY_LISTS=1 -DBACNET_PROTOCOL_REVISION=24 \
                  -DMAX_SCHEDULES=10 \
+                 -DMAX_TREND_LOGS=50 \
                  -ffunction-sections -fdata-sections
 
 INCLUDES := -I$(BACNET_SRC_DIR) -I$(PORTS_LINUX) -I$(PORTS_POSIX) \
@@ -82,7 +83,7 @@ $(TARGET_BIN): $(OBJS) $(BACNET_LIB_TARGET)
 
 $(BACNET_LIB_TARGET):
 	@echo "Building BACnet library..."
-	( cd $(BACNET_LIB_DIR) ; $(MAKE) clean ; $(MAKE) -s DEFINES=-DMAX_SCHEDULES=10 )
+	( cd $(BACNET_LIB_DIR) ; $(MAKE) clean ; $(MAKE) -s DEFINES="-DMAX_SCHEDULES=10 -DMAX_TREND_LOGS=50"  )
 
 .c.o:
 	$(CC) -c $(CFLAGS) $< -o $@
