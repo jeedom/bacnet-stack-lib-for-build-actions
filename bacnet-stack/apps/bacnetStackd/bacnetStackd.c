@@ -61,7 +61,7 @@
 static void Init_Schedules(void);
 
 extern SCHEDULE_DESCR Schedule_Descr[MAX_SCHEDULES];
-extern TREND_LOG_DESCR Trend_Logs[];
+
 
 static int save_current_config(void);
 
