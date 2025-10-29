@@ -2844,7 +2844,7 @@ int main(int argc, char *argv[])
     const char *envp;
     int argi = 1;
     char buf[256];
-    static MSTIMER_HANDLE Trendlog_Timer = { 0 };
+    static struct mstimer Trendlog_Timer = { 0 };
     printf("BACnet Stack Server (Jeedom)\n");
     printf("Version: %s\n", BACNET_VERSION_TEXT);
 
