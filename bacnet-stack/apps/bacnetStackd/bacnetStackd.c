@@ -231,7 +231,7 @@ static bool create_trendlog(uint32_t instance, const char *name,
     wp_data.array_index = BACNET_ARRAY_ALL;
     
     /* ========================================
-     * 0. DÉSACTIVER D'ABORD (CRITIQUE)
+     * ÉTAPE 0 : DÉSACTIVER D'ABORD
      * ======================================== */
     memset(&value, 0, sizeof(value));
     value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
@@ -242,13 +242,13 @@ static bool create_trendlog(uint32_t instance, const char *name,
     wp_data.application_data_len = len;
     
     if (!Trend_Log_Write_Property(&wp_data)) {
-        fprintf(stderr, "  ⚠️  Warning: Failed to disable first (continuing anyway)\n");
+        fprintf(stderr, "  ⚠️  Warning: Failed to disable first\n");
     } else {
         printf("  ✓ Disabled first\n");
     }
     
     /* ========================================
-     * 1. EFFACER BUFFER D'ABORD
+     * ÉTAPE 1 : EFFACER BUFFER
      * ======================================== */
     memset(&value, 0, sizeof(value));
     value.tag = BACNET_APPLICATION_TAG_UNSIGNED_INT;
@@ -259,14 +259,33 @@ static bool create_trendlog(uint32_t instance, const char *name,
     wp_data.application_data_len = len;
     
     if (!Trend_Log_Write_Property(&wp_data)) {
-        fprintf(stderr, "  ✗ Failed to clear RECORD_COUNT\n");
+        fprintf(stderr, "  ⚠️  Warning: Failed to clear RECORD_COUNT\n");
     } else {
         printf("  ✓ Buffer cleared (RECORD_COUNT = 0)\n");
     }
     
     /* ========================================
-     * 2. LOG_DEVICE_OBJECT_PROPERTY
+     * ÉTAPE 2 : LOGGING_TYPE = POLLED (AVANT LOG_DEVICE_OBJECT_PROPERTY)
      * ======================================== */
+    memset(&value, 0, sizeof(value));
+    value.tag = BACNET_APPLICATION_TAG_ENUMERATED;
+    value.type.Enumerated = LOGGING_TYPE_POLLED;
+    
+    len = bacapp_encode_application_data(wp_data.application_data, &value);
+    wp_data.object_property = PROP_LOGGING_TYPE;
+    wp_data.application_data_len = len;
+    
+    if (!Trend_Log_Write_Property(&wp_data)) {
+        fprintf(stderr, "  ✗ Failed to set LOGGING_TYPE\n");
+        success = false;
+    } else {
+        printf("  ✓ Logging Type: POLLED\n");
+    }
+    
+    /* ========================================
+     * ÉTAPE 3 : LOG_DEVICE_OBJECT_PROPERTY (MAINTENANT)
+     * ======================================== */
+    memset(&source_ref, 0, sizeof(source_ref));
     source_ref.objectIdentifier.type = source_type;
     source_ref.objectIdentifier.instance = source_instance;
     source_ref.propertyIdentifier = PROP_PRESENT_VALUE;
@@ -288,6 +307,8 @@ static bool create_trendlog(uint32_t instance, const char *name,
         fprintf(stderr, "  ✗ Failed to set LOG_DEVICE_OBJECT_PROPERTY\n");
         fprintf(stderr, "    Error: class=%d code=%d\n", 
                 wp_data.error_class, wp_data.error_code);
+        fprintf(stderr, "    Source: %s[%u]\n",
+                bactext_object_type_name(source_type), source_instance);
         success = false;
     } else {
         printf("  ✓ Linked to: %s[%u].PRESENT_VALUE\n", 
@@ -295,25 +316,7 @@ static bool create_trendlog(uint32_t instance, const char *name,
     }
     
     /* ========================================
-     * 3. LOGGING_TYPE = POLLED
-     * ======================================== */
-    memset(&value, 0, sizeof(value));
-    value.tag = BACNET_APPLICATION_TAG_ENUMERATED;
-    value.type.Enumerated = LOGGING_TYPE_POLLED;
-    
-    len = bacapp_encode_application_data(wp_data.application_data, &value);
-    wp_data.object_property = PROP_LOGGING_TYPE;
-    wp_data.application_data_len = len;
-    
-    if (!Trend_Log_Write_Property(&wp_data)) {
-        fprintf(stderr, "  ✗ Failed to set LOGGING_TYPE\n");
-        success = false;
-    } else {
-        printf("  ✓ Logging Type: POLLED\n");
-    }
-    
-    /* ========================================
-     * 4. LOG_INTERVAL (en centisecondes)
+     * ÉTAPE 4 : LOG_INTERVAL (en centisecondes)
      * ======================================== */
     if (log_interval > 0) {
         memset(&value, 0, sizeof(value));
@@ -334,7 +337,7 @@ static bool create_trendlog(uint32_t instance, const char *name,
     }
     
     /* ========================================
-     * 5. ALIGN_INTERVALS = TRUE
+     * ÉTAPE 5 : ALIGN_INTERVALS = TRUE
      * ======================================== */
     memset(&value, 0, sizeof(value));
     value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
@@ -352,7 +355,7 @@ static bool create_trendlog(uint32_t instance, const char *name,
     }
     
     /* ========================================
-     * 6. STOP_WHEN_FULL = FALSE (circulaire)
+     * ÉTAPE 6 : STOP_WHEN_FULL = FALSE (circulaire)
      * ======================================== */
     memset(&value, 0, sizeof(value));
     value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
@@ -370,7 +373,7 @@ static bool create_trendlog(uint32_t instance, const char *name,
     }
     
     /* ========================================
-     * 7. ENABLE (EN DERNIER)
+     * ÉTAPE 7 : ENABLE (EN DERNIER)
      * ======================================== */
     memset(&value, 0, sizeof(value));
     value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
@@ -2291,12 +2294,18 @@ static int handle_cmd_trendlog(uint32_t instance)
 
 /* ========================================
  * Commande: trendlog-data <instance> [count]
- * Récupérer les données loggées
- * ========================================*/
+ * Récupérer les données loggées (VERSION COMPLÈTE)
+ * ======================================== */
 static int handle_cmd_trendlog_data(uint32_t instance, int count)
 {
     json_t *root = json_object();
     json_t *data_array = json_array();
+    BACNET_READ_PROPERTY_DATA rpdata;
+    uint8_t apdu[MAX_APDU];
+    int apdu_len;
+    BACNET_APPLICATION_DATA_VALUE value;
+    int decode_len;
+    unsigned int i;
     
     if (!Trend_Log_Valid_Instance(instance)) {
         fprintf(stderr, "ERROR: Trendlog instance %u not valid\n", instance);
@@ -2309,45 +2318,176 @@ static int handle_cmd_trendlog_data(uint32_t instance, int count)
         return -1;
     }
     
-    if (count <= 0) count = 10;  /* Par défaut, 10 dernières entrées */
-    if (count > 100) count = 100;  /* Maximum 100 entrées */
+    if (count <= 0) count = 10;
+    if (count > 100) count = 100;
     
     printf("========== Trendlog %u Data (last %d entries) ==========\n", instance, count);
     
     json_object_set_new(root, "instance", json_integer(instance));
-    json_object_set_new(root, "count", json_integer(count));
+    json_object_set_new(root, "requested_count", json_integer(count));
     
-    /* Utiliser ReadRange pour récupérer les données */
-    BACNET_READ_RANGE_DATA rr_data = {0};
-    uint8_t apdu[MAX_APDU] = {0};
+    /* ========================================
+     * Lire RECORD_COUNT pour savoir combien d'entrées disponibles
+     * ======================================== */
+    memset(&rpdata, 0, sizeof(rpdata));
+    rpdata.object_type = OBJECT_TRENDLOG;
+    rpdata.object_instance = instance;
+    rpdata.object_property = PROP_RECORD_COUNT;
+    rpdata.array_index = BACNET_ARRAY_ALL;
+    rpdata.application_data = apdu;
+    rpdata.application_data_len = sizeof(apdu);
     
-    rr_data.object_type = OBJECT_TRENDLOG;
-    rr_data.object_instance = instance;
-    rr_data.object_property = PROP_LOG_BUFFER;
-    rr_data.array_index = BACNET_ARRAY_ALL;
+    apdu_len = Trend_Log_Read_Property(&rpdata);
+    if (apdu_len > 0) {
+        decode_len = bacapp_decode_application_data(rpdata.application_data,
+                                                    rpdata.application_data_len,
+                                                    &value);
+        if (decode_len > 0 && value.tag == BACNET_APPLICATION_TAG_UNSIGNED_INT) {
+            unsigned int record_count = value.type.Unsigned_Int;
+            json_object_set_new(root, "total_records", json_integer(record_count));
+            printf("Total records available: %u\n", record_count);
+            
+            if (record_count == 0) {
+                printf("No data logged yet.\n");
+                json_object_set_new(root, "data", data_array);
+                
+                char *json_str = json_dumps(root, JSON_INDENT(2));
+                printf("\n%s\n", json_str);
+                free(json_str);
+                json_decref(root);
+                return 0;
+            }
+            
+            /* Limiter count au nombre réel d'entrées */
+            if ((unsigned int)count > record_count) {
+                count = record_count;
+            }
+        }
+    }
     
-    /* Lire par position : les dernières 'count' entrées */
-    rr_data.RequestType = RR_BY_POSITION;
-    rr_data.Range.RefIndex = -count;  /* Négatif = depuis la fin */
-    rr_data.Count = count;
-    rr_data.Overhead = 50;  /* Overhead APDU */
+    /* ========================================
+     * Lire LOG_BUFFER pour récupérer les données
+     * ======================================== */
+    printf("Reading last %d entries...\n\n", count);
     
-    int len = rr_trend_log_encode(apdu, &rr_data);
-    
-    if (len > 0) {
-        printf("Retrieved %u entries:\n\n", rr_data.ItemCount);
-        json_object_set_new(root, "retrieved_count", json_integer(rr_data.ItemCount));
+    /* Lire les N dernières entrées une par une */
+    for (i = 0; i < (unsigned int)count; i++) {
+        json_t *entry = json_object();
         
-        /* TODO: Parser les données du buffer APDU */
-        /* Format complexe, nécessite décodage complet */
-        printf("(Full data parsing requires APDU decoding - see LOG_BUFFER property)\n");
+        /* INDEX : -1 = dernière entrée, -2 = avant-dernière, etc. */
+        int index = -(count - i);
         
-    } else {
-        printf("No data available or error reading buffer\n");
-        json_object_set_new(root, "retrieved_count", json_integer(0));
+        memset(&rpdata, 0, sizeof(rpdata));
+        rpdata.object_type = OBJECT_TRENDLOG;
+        rpdata.object_instance = instance;
+        rpdata.object_property = PROP_LOG_BUFFER;
+        rpdata.array_index = index;  /* Indexation négative */
+        rpdata.application_data = apdu;
+        rpdata.application_data_len = sizeof(apdu);
+        
+        apdu_len = Trend_Log_Read_Property(&rpdata);
+        
+        if (apdu_len > 0) {
+            BACNET_LOG_RECORD log_record;
+            uint8_t *apdu_ptr = rpdata.application_data;
+            int total_len = 0;
+            
+            /* Décoder l'enregistrement de log */
+            /* Format : Opening Tag [0], timestamp, log_datum, status_flags, Closing Tag [0] */
+            
+            if (decode_is_opening_tag_number(apdu_ptr, 0)) {
+                total_len++;
+                apdu_ptr++;
+                
+                /* Timestamp */
+                BACNET_DATE_TIME timestamp;
+                decode_len = bacapp_decode_application_data(apdu_ptr, 
+                                                           apdu_len - total_len,
+                                                           &value);
+                if (decode_len > 0 && value.tag == BACNET_APPLICATION_TAG_TIMESTAMP) {
+                    /* Le timestamp est dans value.type.Date_Time */
+                    timestamp = value.type.Date_Time;
+                    
+                    char timestamp_str[64];
+                    snprintf(timestamp_str, sizeof(timestamp_str),
+                            "%04d-%02d-%02d %02d:%02d:%02d",
+                            timestamp.date.year + 1900,
+                            timestamp.date.month,
+                            timestamp.date.day,
+                            timestamp.time.hour,
+                            timestamp.time.min,
+                            timestamp.time.sec);
+                    
+                    json_object_set_new(entry, "timestamp", json_string(timestamp_str));
+                    
+                    total_len += decode_len;
+                    apdu_ptr += decode_len;
+                }
+                
+                /* Log datum (la valeur) */
+                decode_len = bacapp_decode_application_data(apdu_ptr,
+                                                           apdu_len - total_len,
+                                                           &value);
+                if (decode_len > 0) {
+                    /* Décoder selon le type */
+                    switch (value.tag) {
+                        case BACNET_APPLICATION_TAG_REAL:
+                            json_object_set_new(entry, "value", json_real(value.type.Real));
+                            json_object_set_new(entry, "type", json_string("REAL"));
+                            printf("[%d] %.2f\n", i+1, value.type.Real);
+                            break;
+                            
+                        case BACNET_APPLICATION_TAG_BOOLEAN:
+                            json_object_set_new(entry, "value", json_boolean(value.type.Boolean));
+                            json_object_set_new(entry, "type", json_string("BOOLEAN"));
+                            printf("[%d] %s\n", i+1, value.type.Boolean ? "TRUE" : "FALSE");
+                            break;
+                            
+                        case BACNET_APPLICATION_TAG_UNSIGNED_INT:
+                            json_object_set_new(entry, "value", json_integer(value.type.Unsigned_Int));
+                            json_object_set_new(entry, "type", json_string("UNSIGNED_INT"));
+                            printf("[%d] %u\n", i+1, (unsigned int)value.type.Unsigned_Int);
+                            break;
+                            
+                        case BACNET_APPLICATION_TAG_SIGNED_INT:
+                            json_object_set_new(entry, "value", json_integer(value.type.Signed_Int));
+                            json_object_set_new(entry, "type", json_string("SIGNED_INT"));
+                            printf("[%d] %d\n", i+1, value.type.Signed_Int);
+                            break;
+                            
+                        case BACNET_APPLICATION_TAG_ENUMERATED:
+                            json_object_set_new(entry, "value", json_integer(value.type.Enumerated));
+                            json_object_set_new(entry, "type", json_string("ENUMERATED"));
+                            printf("[%d] %u\n", i+1, (unsigned int)value.type.Enumerated);
+                            break;
+                            
+                        default:
+                            json_object_set_new(entry, "value", json_null());
+                            json_object_set_new(entry, "type", json_string("UNKNOWN"));
+                            printf("[%d] (unknown type %d)\n", i+1, value.tag);
+                            break;
+                    }
+                    
+                    total_len += decode_len;
+                    apdu_ptr += decode_len;
+                }
+                
+                json_array_append_new(data_array, entry);
+            } else {
+                /* Échec du décodage */
+                json_object_set_new(entry, "error", json_string("Failed to decode entry"));
+                json_array_append_new(data_array, entry);
+            }
+        } else {
+            /* Erreur de lecture */
+            json_object_set_new(entry, "index", json_integer(index));
+            json_object_set_new(entry, "error", json_string("Failed to read LOG_BUFFER"));
+            json_array_append_new(data_array, entry);
+        }
     }
     
     json_object_set_new(root, "data", data_array);
+    json_object_set_new(root, "retrieved_count", json_integer(json_array_size(data_array)));
     
     /* Afficher le JSON */
     char *json_str = json_dumps(root, JSON_INDENT(2));
