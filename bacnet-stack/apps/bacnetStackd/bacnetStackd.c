@@ -2295,10 +2295,8 @@ static char* handle_cmd_trendlog_data_json(uint32_t instance, int count)
         json_object_set_new(root, "error", json_string("Invalid instance"));
         
         char *json_str = json_dumps(root, JSON_INDENT(2));
-        printf("%s\n", json_str);
-        free(json_str);
         json_decref(root);
-        return -1;
+        return json_str;  /* ← Retourner le JSON d'erreur au lieu de -1 */
     }
     
     if (count <= 0) count = 10;
@@ -2685,15 +2683,15 @@ if (strcmp(cmd, "trendlog-data") == 0) {
     if (n >= 1) {
         char *response = handle_cmd_trendlog_data_json(instance, count);
         if (response) {
-            send(client_fd, response, strlen(response), 0);
-            send(client_fd, "\n", 1, 0);
+            (void)write(g_client_fd, response, strlen(response));
+            (void)write(g_client_fd, "\n", 1);
             free(response);
         }
     } else {
         const char *usage = "Usage: trendlog-data <instance> [count]\n";
-        send(client_fd, usage, strlen(usage), 0);
+        (void)write(g_client_fd, usage, strlen(usage));
     }
-    return false;
+    return 0; 
 }
     
     if (strcmp(cmd, "trendlog-enable") == 0) {
