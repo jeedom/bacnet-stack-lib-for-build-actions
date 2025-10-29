@@ -117,6 +117,50 @@ static void Trend_Log_Init_Empty(void)
     printf("Trend_Log_Init_Empty: All Trendlogs disabled and cleared.\n");
 }
 
+static void clear_all_trendlogs(void)
+{
+    unsigned int i;
+    
+    for (i = 0; i < MAX_TREND_LOGS; i++) {
+        if (!Trend_Log_Valid_Instance(i)) {
+            continue;
+        }
+        
+        /* Désactiver et effacer chaque Trendlog */
+        BACNET_WRITE_PROPERTY_DATA wp_data;
+        BACNET_APPLICATION_DATA_VALUE value;
+        int len;
+        
+        /* ENABLE = FALSE */
+        memset(&wp_data, 0, sizeof(wp_data));
+        memset(&value, 0, sizeof(value));
+        
+        value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
+        value.type.Boolean = false;
+        
+        len = bacapp_encode_application_data(wp_data.application_data, &value);
+        
+        wp_data.object_type = OBJECT_TRENDLOG;
+        wp_data.object_instance = i;
+        wp_data.object_property = PROP_ENABLE;
+        wp_data.array_index = BACNET_ARRAY_ALL;
+        wp_data.application_data_len = len;
+        
+        Trend_Log_Write_Property(&wp_data);
+        
+        /* RECORD_COUNT = 0 */
+        memset(&value, 0, sizeof(value));
+        value.tag = BACNET_APPLICATION_TAG_UNSIGNED_INT;
+        value.type.Unsigned_Int = 0;
+        
+        len = bacapp_encode_application_data(wp_data.application_data, &value);
+        wp_data.object_property = PROP_RECORD_COUNT;
+        wp_data.application_data_len = len;
+        
+        Trend_Log_Write_Property(&wp_data);
+    }
+}
+
 static void print_timestamp_log(const char *message)
 {
     time_t now;
@@ -2155,7 +2199,7 @@ static int handle_cmd_trendlog(uint32_t instance)
     uint8_t apdu[MAX_APDU];
     int apdu_len;
     char *json_str;
-    size_t i;  /* CORRECTION : Déclarer i ici, pas dans le for */
+    size_t i;  /* DÉCLARATION ICI */
     
     struct {
         BACNET_PROPERTY_ID prop_id;
@@ -2193,7 +2237,7 @@ static int handle_cmd_trendlog(uint32_t instance)
     printf("========== Trendlog %u Details ==========\n", instance);
     json_object_set_new(root, "instance", json_integer(instance));
     
-    /* CORRECTION : Pas de size_t i dans le for */
+    /* UTILISER i ICI - PAS DE REDÉCLARATION */
     for (i = 0; i < sizeof(properties) / sizeof(properties[0]); i++) {
         rpdata.object_type = OBJECT_TRENDLOG;
         rpdata.object_instance = instance;
@@ -2846,7 +2890,7 @@ static void clear_all_objects(void)
     }
     printf("  Schedules cleared: Schedule_Count() = %u\n", Schedule_Count());
     
-    /* AJOUT : Vider les Trendlogs */
+    /* Vider les Trendlogs */
     printf("Clearing all %d Trendlogs...\n", MAX_TREND_LOGS);
     clear_all_trendlogs();
     printf("  Trendlogs cleared: Trend_Log_Count() = %u\n", Trend_Log_Count());

@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <string.h>
 #include "bacnet/basic/object/trendlog.h"
+#include "trendlog_override.h"
 #include "bacnet/datalink/datalink.h"
 
 /* Référence externe au tableau des Trendlogs (après modification de trendlog.c) */
