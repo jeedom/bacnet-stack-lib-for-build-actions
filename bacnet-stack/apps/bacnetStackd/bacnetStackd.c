@@ -2279,7 +2279,7 @@ static int handle_cmd_trendlog(uint32_t instance)
  * Commande: trendlog-data <instance> [count]
  * Récupérer les données loggées (VERSION COMPLÈTE)
  * ======================================== */
-static int handle_cmd_trendlog_data(uint32_t instance, int count)
+static char* handle_cmd_trendlog_data_json(uint32_t instance, int count)
 {
     json_t *root = json_object();
     json_t *data_array = json_array();
@@ -2473,12 +2473,9 @@ static int handle_cmd_trendlog_data(uint32_t instance, int count)
     json_object_set_new(root, "retrieved_count", json_integer(json_array_size(data_array)));
     
     /* Afficher le JSON */
-    char *json_str = json_dumps(root, JSON_INDENT(2));
-    printf("\n%s\n", json_str);
-    free(json_str);
+ char *json_str = json_dumps(root, JSON_INDENT(2));
     json_decref(root);
-    
-    return 0;
+    return json_str; 
 }
 
 /* ========================================
@@ -2681,17 +2678,23 @@ static int handle_socket_line(const char *line)
         return false;
     }
     
-    if (strcmp(cmd, "trendlog-data") == 0) {
-        uint32_t instance = 0;
-        int count = 10;
-        int n = sscanf(line, "trendlog-data %u %d", &instance, &count);
-        if (n >= 1) {
-            handle_cmd_trendlog_data(instance, count);
-        } else {
-            printf("Usage: trendlog-data <instance> [count]\n");
+if (strcmp(cmd, "trendlog-data") == 0) {
+    uint32_t instance = 0;
+    int count = 10;
+    int n = sscanf(line, "trendlog-data %u %d", &instance, &count);
+    if (n >= 1) {
+        char *response = handle_cmd_trendlog_data_json(instance, count);
+        if (response) {
+            send(client_fd, response, strlen(response), 0);
+            send(client_fd, "\n", 1, 0);
+            free(response);
         }
-        return false;
+    } else {
+        const char *usage = "Usage: trendlog-data <instance> [count]\n";
+        send(client_fd, usage, strlen(usage), 0);
     }
+    return false;
+}
     
     if (strcmp(cmd, "trendlog-enable") == 0) {
         uint32_t instance = 0;
