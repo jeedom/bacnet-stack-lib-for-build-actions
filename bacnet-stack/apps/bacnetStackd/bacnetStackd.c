@@ -44,7 +44,6 @@
 #include "bacnet/basic/object/schedule.h"
 #include "bacnet/basic/object/trendlog.h"
 #include "trendlog_override.h"
-#include "schedule_override.h"
 #include "bacnet/basic/object/device.h"
 #include "bacnet/basic/services.h"
 #include "bacnet/datalink/datalink.h"
@@ -57,10 +56,12 @@
 #include "bacnet/basic/sys/mstimer.h"
 #include "bacnet/basic/tsm/tsm.h"
 
-extern SCHEDULE_DESCR Schedule_Descr[MAX_SCHEDULES];
-extern TREND_LOG_DESCR Trend_Logs[];
+
 
 static void Init_Schedules(void);
+
+extern SCHEDULE_DESCR Schedule_Descr[MAX_SCHEDULES];
+extern TREND_LOG_DESCR Trend_Logs[];
 
 static int save_current_config(void);
 
