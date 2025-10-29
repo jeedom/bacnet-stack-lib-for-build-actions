@@ -1790,15 +1790,7 @@ void trend_log_timer(uint16_t uSeconds)
         }
     }
 }
-/**
- * @brief Configure a Trendlog directly (workaround for Write_Property issues)
- * @param instance - Trendlog instance number
- * @param source_type - Type of source object
- * @param source_instance - Instance of source object  
- * @param log_interval_seconds - Logging interval in seconds
- * @param enable - Enable the trendlog
- * @return true if successful
- */
+
 bool Trend_Log_Configure_Direct(
     uint32_t instance,
     BACNET_OBJECT_TYPE source_type,
@@ -1809,7 +1801,6 @@ bool Trend_Log_Configure_Direct(
     TL_LOG_INFO *log;
     int log_index;
     
-    /* Trouver l'index */
     log_index = Trend_Log_Instance_To_Index(instance);
     if (log_index < 0 || log_index >= MAX_TREND_LOGS) {
         return false;
@@ -1817,7 +1808,7 @@ bool Trend_Log_Configure_Direct(
     
     log = &LogInfo[log_index];
     
-    /* Configuration directe de la source */
+    /* Configuration de la source */
     log->Source.objectIdentifier.type = source_type;
     log->Source.objectIdentifier.instance = source_instance;
     log->Source.propertyIdentifier = PROP_PRESENT_VALUE;
@@ -1828,15 +1819,21 @@ bool Trend_Log_Configure_Direct(
     /* Configuration des paramètres */
     log->LoggingType = LOGGING_TYPE_POLLED;
     log->ulLogInterval = log_interval_seconds;
-    log->bAlignIntervals = true;
+    log->bAlignIntervals = false;  // ← Changé à false pour simplifier
+    log->ulIntervalOffset = 0;
     log->bStopWhenFull = false;
     log->bEnable = enable;
+    
+    /* ⭐ CRITIQUE : Configurer les temps avec wildcards */
+    datetime_wildcard_set(&log->StartTime);
+    datetime_wildcard_set(&log->StopTime);
+    log->ucTimeFlags = TL_T_START_WILD | TL_T_STOP_WILD;
+    log->tStartTime = 0;
+    log->tStopTime = datetime_seconds_since_epoch_max();
     
     /* Réinitialiser le buffer */
     log->ulRecordCount = 0;
     log->iIndex = 0;
-    
-    /* Initialiser le dernier timestamp */
     log->tLastDataTime = Trend_Log_Epoch_Seconds_Now();
     
     return true;
