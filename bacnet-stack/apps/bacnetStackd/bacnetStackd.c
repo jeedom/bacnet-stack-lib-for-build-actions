@@ -117,49 +117,7 @@ static void Trend_Log_Init_Empty(void)
     printf("Trend_Log_Init_Empty: All Trendlogs disabled and cleared.\n");
 }
 
-static void clear_all_trendlogs(void)
-{
-    unsigned int i;
-    
-    for (i = 0; i < MAX_TREND_LOGS; i++) {
-        if (!Trend_Log_Valid_Instance(i)) {
-            continue;
-        }
-        
-        /* Désactiver et effacer chaque Trendlog */
-        BACNET_WRITE_PROPERTY_DATA wp_data;
-        BACNET_APPLICATION_DATA_VALUE value;
-        int len;
-        
-        /* ENABLE = FALSE */
-        memset(&wp_data, 0, sizeof(wp_data));
-        memset(&value, 0, sizeof(value));
-        
-        value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
-        value.type.Boolean = false;
-        
-        len = bacapp_encode_application_data(wp_data.application_data, &value);
-        
-        wp_data.object_type = OBJECT_TRENDLOG;
-        wp_data.object_instance = i;
-        wp_data.object_property = PROP_ENABLE;
-        wp_data.array_index = BACNET_ARRAY_ALL;
-        wp_data.application_data_len = len;
-        
-        Trend_Log_Write_Property(&wp_data);
-        
-        /* RECORD_COUNT = 0 */
-        memset(&value, 0, sizeof(value));
-        value.tag = BACNET_APPLICATION_TAG_UNSIGNED_INT;
-        value.type.Unsigned_Int = 0;
-        
-        len = bacapp_encode_application_data(wp_data.application_data, &value);
-        wp_data.object_property = PROP_RECORD_COUNT;
-        wp_data.application_data_len = len;
-        
-        Trend_Log_Write_Property(&wp_data);
-    }
-}
+
 
 static void print_timestamp_log(const char *message)
 {

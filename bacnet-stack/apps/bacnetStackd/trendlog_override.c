@@ -69,7 +69,9 @@ static void clear_single_trendlog(uint32_t index)
  */
 void clear_all_trendlogs(void)
 {
-    for (uint32_t i = 0; i < MAX_TREND_LOGS; i++) {
+    uint32_t i; 
+    
+    for (i = 0; i < MAX_TREND_LOGS; i++) {
         clear_single_trendlog(i);
     }
 }
