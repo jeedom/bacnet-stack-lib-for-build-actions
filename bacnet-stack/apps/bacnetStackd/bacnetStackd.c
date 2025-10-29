@@ -1402,6 +1402,7 @@ static int apply_config_from_json(const char *json_text)
         if (!json_is_object(it)) { continue; }
 
         typ   = json_string_value(json_object_get(it, "type"));
+        printf("DEBUG: Processing object %u/%u, type='%s'\n", (unsigned int)i+1, (unsigned int)n, typ ? typ : "NULL");
         jinst = json_object_get(it, "instance");
         inst  = (uint32_t)json_integer_value(jinst);
         name  = json_string_value(json_object_get(it, "name"));
