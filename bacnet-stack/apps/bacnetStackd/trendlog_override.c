@@ -12,53 +12,53 @@
 #include <stdint.h>
 #include <string.h>
 #include "bacnet/basic/object/trendlog.h"
+#include "bacnet/wp.h"
+#include "bacnet/bacapp.h"
 #include "trendlog_override.h"
-#include "bacnet/datalink/datalink.h"
-
-/* Référence externe au tableau des Trendlogs (après modification de trendlog.c) */
-extern TREND_LOG_DESCR Trend_Logs[];
 
 /**
- * @brief Vide un Trendlog spécifique
- * @param index Index du Trendlog à vider
+ * @brief Vide un Trendlog spécifique en utilisant l'API publique
+ * @param instance Instance du Trendlog à vider
  */
-static void clear_single_trendlog(uint32_t index)
+static void clear_single_trendlog(uint32_t instance)
 {
-    if (index >= MAX_TREND_LOGS) {
+    BACNET_WRITE_PROPERTY_DATA wp_data;
+    BACNET_APPLICATION_DATA_VALUE value;
+    int len;
+    
+    if (!Trend_Log_Valid_Instance(instance)) {
         return;
     }
-
-    TREND_LOG_DESCR *CurrentTL = &Trend_Logs[index];
     
-    /* Réinitialiser les propriétés principales */
-    CurrentTL->Instance = 0;
-    CurrentTL->bEnable = false;
-    CurrentTL->ucTimeFlags = 0;
-    CurrentTL->ulRecordCount = 0;
-    CurrentTL->ulTotalRecordCount = 0;
-    CurrentTL->tStartTime.date.year = 0;
-    CurrentTL->tStartTime.date.month = 0;
-    CurrentTL->tStartTime.date.day = 0;
-    CurrentTL->tStartTime.date.wday = 0;
-    CurrentTL->tStartTime.time.hour = 0;
-    CurrentTL->tStartTime.time.min = 0;
-    CurrentTL->tStartTime.time.sec = 0;
-    CurrentTL->tStartTime.time.hundredths = 0;
-    CurrentTL->tStopTime = CurrentTL->tStartTime;
+    /* Initialiser les structures */
+    memset(&wp_data, 0, sizeof(wp_data));
+    memset(&value, 0, sizeof(value));
     
-    /* Réinitialiser le tampon de log */
-    CurrentTL->iIndex = 0;
-    if (CurrentTL->Logs != NULL) {
-        memset(CurrentTL->Logs, 0, TL_MAX_ENTRIES * sizeof(TL_DATA_REC));
-    }
+    /* Configuration de base du Write Property */
+    wp_data.object_type = OBJECT_TRENDLOG;
+    wp_data.object_instance = instance;
+    wp_data.array_index = BACNET_ARRAY_ALL;
     
-    /* Réinitialiser la source des données */
-    CurrentTL->Source.arrayIndex = 0;
-    CurrentTL->Source.deviceIdentifier.type = OBJECT_NONE;
-    CurrentTL->Source.deviceIdentifier.instance = 0;
-    CurrentTL->Source.objectIdentifier.type = OBJECT_NONE;
-    CurrentTL->Source.objectIdentifier.instance = 0;
-    CurrentTL->Source.objectProperty = 0;
+    /* 1. Désactiver le Trendlog */
+    value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
+    value.type.Boolean = false;
+    
+    len = bacapp_encode_application_data(wp_data.application_data, &value);
+    wp_data.object_property = PROP_ENABLE;
+    wp_data.application_data_len = len;
+    
+    Trend_Log_Write_Property(&wp_data);
+    
+    /* 2. Effacer le buffer (RECORD_COUNT = 0) */
+    memset(&value, 0, sizeof(value));
+    value.tag = BACNET_APPLICATION_TAG_UNSIGNED_INT;
+    value.type.Unsigned_Int = 0;
+    
+    len = bacapp_encode_application_data(wp_data.application_data, &value);
+    wp_data.object_property = PROP_RECORD_COUNT;
+    wp_data.application_data_len = len;
+    
+    Trend_Log_Write_Property(&wp_data);
 }
 
 /**
@@ -69,7 +69,7 @@ static void clear_single_trendlog(uint32_t index)
  */
 void clear_all_trendlogs(void)
 {
-    uint32_t i; 
+    uint32_t i;
     
     for (i = 0; i < MAX_TREND_LOGS; i++) {
         clear_single_trendlog(i);
