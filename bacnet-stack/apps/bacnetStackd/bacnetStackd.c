@@ -2972,24 +2972,20 @@ int main(int argc, char *argv[])
         }
 
 if (mstimer_expired(&Trendlog_Timer)) {
-    printf("=== TRENDLOG TIMER FIRED ===\n");
+    int i;
+    printf("\n=== TRENDLOG TIMER FIRED ===\n");
     mstimer_reset(&Trendlog_Timer);
     
-    // Vérifier chaque trend log
-    for (unsigned int i = 0; i < 3; i++) {  // Les 3 premiers seulement
-        uint32_t instance = Trend_Log_Index_To_Instance(i);
-        bool enabled = Trend_Log_Enable(instance);
+    /* Vérifier les 3 premiers trend logs */
+    for (i = 0; i < 3; i++) {
         bool is_enabled = TL_Is_Enabled(i);
-        
-        printf("TL[%u]: enabled=%d, TL_Is_Enabled=%d\n", i, enabled, is_enabled);
-        
-        // Lire les infos du log
-        // Accéder directement à la structure (si possible)
+        printf("TL[%d]: TL_Is_Enabled() = %d\n", i, is_enabled);
     }
     
     printf("Calling trend_log_timer(1)...\n");
     trend_log_timer(1);
-    printf("=== DONE ===\n");
+    
+    printf("=== DONE ===\n\n");
 }
 
 
