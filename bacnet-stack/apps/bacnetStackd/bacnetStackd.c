@@ -1391,6 +1391,11 @@ static int apply_config_from_json(const char *json_text)
     n = json_array_size(objs);
     printf("Creating %u objects from JSON...\n", (unsigned int)n);
     
+    /* ========================================
+     * PHASE 1 : Créer TOUS les objets SAUF les Trendlogs
+     * ======================================== */
+    printf("=== Phase 1: Creating base objects ===\n");
+    
     for (i = 0; i < n; i++) {
         json_t *it = json_array_get(objs, i);
         const char *typ;
@@ -1403,6 +1408,13 @@ static int apply_config_from_json(const char *json_text)
 
         typ   = json_string_value(json_object_get(it, "type"));
         printf("DEBUG: Processing object %u/%u, type='%s'\n", (unsigned int)i+1, (unsigned int)n, typ ? typ : "NULL");
+        
+        /* SKIP les Trendlogs dans cette phase */
+        if (typ && strcmp(typ, "trendlog") == 0) {
+            printf("  → Skipping trendlog (will be configured in phase 2)\n");
+            continue;
+        }
+        
         jinst = json_object_get(it, "instance");
         inst  = (uint32_t)json_integer_value(jinst);
         name  = json_string_value(json_object_get(it, "name"));
@@ -1412,6 +1424,9 @@ static int apply_config_from_json(const char *json_text)
             continue;
         }
 
+        /* ... TOUT LE CODE POUR AI, AO, AV, BI, BO, BV, MSI, MSO, MSV, SCHEDULE ... */
+        /* (Je ne recopie pas tout pour la lisibilité, gardez votre code existant) */
+        
         if (strcmp(typ, "analog-input") == 0) {
             bool exists = Analog_Input_Valid_Instance(inst);
             if (!exists) {
@@ -1435,421 +1450,45 @@ static int apply_config_from_json(const char *json_text)
                 Analog_Input_Present_Value_Set(inst, (float)json_number_value(jpv));
             }
             Analog_Input_Out_Of_Service_Set(inst, true);
-        } 
-        else if (strcmp(typ, "analog-value") == 0) {
-            bool exists = Analog_Value_Valid_Instance(inst);
-            if (!exists) {
-                uint32_t result = Analog_Value_Create(inst);
-                if (result != BACNET_MAX_INSTANCE) {
-                    printf("Created Analog Value %u\n", inst);
-                } else {
-                    printf("Failed to create Analog Value %u\n", inst);
-                    continue;
-                }
-            } else {
-                printf("Updating existing Analog Value %u\n", inst);
-            }
-            if (name) { 
-                char *name_copy = strdup(name);
-                if (name_copy) {
-                    set_object_name(OBJECT_ANALOG_VALUE, inst, name_copy);
-                }
-            }
-            if (json_is_number(jpv)) {
-                Analog_Value_Present_Value_Set(inst, (float)json_number_value(jpv), BACNET_MAX_PRIORITY);
-            }
-        } 
-        else if (strcmp(typ, "analog-output") == 0) {
-            bool exists = Analog_Output_Valid_Instance(inst);
-            if (!exists) {
-                uint32_t result = Analog_Output_Create(inst);
-                if (result != BACNET_MAX_INSTANCE) {
-                    printf("Created Analog Output %u\n", inst);
-                } else {
-                    printf("Failed to create Analog Output %u\n", inst);
-                    continue;
-                }
-            } else {
-                printf("Updating existing Analog Output %u\n", inst);
-            }
-            if (name) { 
-                char *name_copy = strdup(name);
-                if (name_copy) {
-                    set_object_name(OBJECT_ANALOG_OUTPUT, inst, name_copy);
-                }
-            }
-            if (json_is_number(jpv)) {
-                Analog_Output_Present_Value_Set(inst, (float)json_number_value(jpv), BACNET_MAX_PRIORITY);
-            }
-            Analog_Output_Out_Of_Service_Set(inst, true);
         }
-        else if (strcmp(typ, "binary-input") == 0) {
-            bool exists = Binary_Input_Valid_Instance(inst);
-            if (!exists) {
-                uint32_t result = Binary_Input_Create(inst);
-                if (result != BACNET_MAX_INSTANCE) {
-                    printf("Created Binary Input %u\n", inst);
-                } else {
-                    printf("Failed to create Binary Input %u\n", inst);
-                    continue;
-                }
-            } else {
-                printf("Updating existing Binary Input %u\n", inst);
-            }
-            if (name) { 
-                char *name_copy = strdup(name);
-                if (name_copy) {
-                    set_object_name(OBJECT_BINARY_INPUT, inst, name_copy);
-                }
-            }
-            if (json_is_integer(jpv)) {
-                Binary_Input_Present_Value_Set(inst, (BACNET_BINARY_PV)json_integer_value(jpv));
-            }
-            Binary_Input_Out_Of_Service_Set(inst, true);
-        }
-        else if (strcmp(typ, "binary-output") == 0) {
-            bool exists = Binary_Output_Valid_Instance(inst);
-            if (!exists) {
-                uint32_t result = Binary_Output_Create(inst);
-                if (result != BACNET_MAX_INSTANCE) {
-                    printf("Created Binary Output %u\n", inst);
-                } else {
-                    printf("Failed to create Binary Output %u\n", inst);
-                    continue;
-                }
-            } else {
-                printf("Updating existing Binary Output %u\n", inst);
-            }
-            if (name) { 
-                char *name_copy = strdup(name);
-                if (name_copy) {
-                    set_object_name(OBJECT_BINARY_OUTPUT, inst, name_copy);
-                }
-            }
-            if (json_is_integer(jpv)) {
-                Binary_Output_Present_Value_Set(inst, (BACNET_BINARY_PV)json_integer_value(jpv), BACNET_MAX_PRIORITY);
-            }
-            Binary_Output_Out_Of_Service_Set(inst, true);
-        }
-        else if (strcmp(typ, "binary-value") == 0) {
-            bool exists = Binary_Value_Valid_Instance(inst);
-            if (!exists) {
-                uint32_t result = Binary_Value_Create(inst);
-                if (result != BACNET_MAX_INSTANCE) {
-                    printf("Created Binary Value %u\n", inst);
-                } else {
-                    printf("Failed to create Binary Value %u\n", inst);
-                    continue;
-                }
-            } else {
-                printf("Updating existing Binary Value %u\n", inst);
-            }
-            if (name) { 
-                char *name_copy = strdup(name);
-                if (name_copy) {
-                    set_object_name(OBJECT_BINARY_VALUE, inst, name_copy);
-                }
-            }
-            if (json_is_integer(jpv)) {
-                Binary_Value_Present_Value_Set(inst, (BACNET_BINARY_PV)json_integer_value(jpv));
-            }
-        }
-        else if (strcmp(typ, "multi-state-input") == 0) {
-            bool exists = Multistate_Input_Valid_Instance(inst);
-            if (!exists) {
-                uint32_t result = Multistate_Input_Create(inst);
-                if (result != BACNET_MAX_INSTANCE) {
-                    printf("Created Multi-State Input %u\n", inst);
-                } else {
-                    printf("Failed to create Multi-State Input %u\n", inst);
-                    continue;
-                }
-            } else {
-                printf("Updating existing Multi-State Input %u\n", inst);
-            }
-            if (name) { 
-                char *name_copy = strdup(name);
-                if (name_copy) {
-                    set_object_name(OBJECT_MULTI_STATE_INPUT, inst, name_copy);
-                }
-            }
-            if (json_is_integer(jpv)) {
-                Multistate_Input_Present_Value_Set(inst, (uint32_t)json_integer_value(jpv));
-            }
-            Multistate_Input_Out_Of_Service_Set(inst, true);
-        }
-        else if (strcmp(typ, "multi-state-output") == 0) {
-            bool exists = Multistate_Output_Valid_Instance(inst);
-            if (!exists) {
-                uint32_t result = Multistate_Output_Create(inst);
-                if (result != BACNET_MAX_INSTANCE) {
-                    printf("Created Multi-State Output %u\n", inst);
-                } else {
-                    printf("Failed to create Multi-State Output %u\n", inst);
-                    continue;
-                }
-            } else {
-                printf("Updating existing Multi-State Output %u\n", inst);
-            }
-            if (name) { 
-                char *name_copy = strdup(name);
-                if (name_copy) {
-                    set_object_name(OBJECT_MULTI_STATE_OUTPUT, inst, name_copy);
-                }
-            }
-            if (json_is_integer(jpv)) {
-                Multistate_Output_Present_Value_Set(inst, (uint32_t)json_integer_value(jpv), BACNET_MAX_PRIORITY);
-            }
-            Multistate_Output_Out_Of_Service_Set(inst, true);
-        }
-        else if (strcmp(typ, "multi-state-value") == 0) {
-            bool exists = Multistate_Value_Valid_Instance(inst);
-            if (!exists) {
-                uint32_t result = Multistate_Value_Create(inst);
-                if (result != BACNET_MAX_INSTANCE) {
-                    printf("Created Multi-State Value %u\n", inst);
-                } else {
-                    printf("Failed to create Multi-State Value %u\n", inst);
-                    continue;
-                }
-            } else {
-                printf("Updating existing Multi-State Value %u\n", inst);
-            }
-            if (name) { 
-                char *name_copy = strdup(name);
-                if (name_copy) {
-                    set_object_name(OBJECT_MULTI_STATE_VALUE, inst, name_copy);
-                }
-            }
-            if (json_is_integer(jpv)) {
-                Multistate_Value_Present_Value_Set(inst, (uint32_t)json_integer_value(jpv));
-            }
-        }
-        else if (strcmp(typ, "schedule") == 0) {
-            bool exists;
-            size_t day_idx;
-            json_t *weekly_schedule;
-            json_t *default_value;
-            json_t *priority;
-            double val;
-            
-            exists = Schedule_Valid_Instance(inst);
-            if (!exists) {
-                printf("Schedule %u does not exist. MAX_SCHEDULES may be too low or instance out of range.\n", inst);
-                printf("  Schedules available: 0 to %u\n", Schedule_Count() > 0 ? Schedule_Count() - 1 : 0);
-                continue;
-            }
-            
-            printf("Configuring Schedule %u\n", inst);
-            
-            if (name) {
-                char *name_copy = strdup(name);
-                if (name_copy) {
-                    set_object_name(OBJECT_SCHEDULE, inst, name_copy);
-                    printf("  Schedule name: '%s'\n", name);
-                }
-            }
-            
-            default_value = json_object_get(it, "defaultValue");
-            if (default_value && !json_is_null(default_value)) {
-                BACNET_APPLICATION_DATA_VALUE app_value;
-                BACNET_WRITE_PROPERTY_DATA wp_data;
-                uint8_t apdu[MAX_APDU];
-                int apdu_len;
-                
-                memset(&app_value, 0, sizeof(app_value));
-                memset(&wp_data, 0, sizeof(wp_data));
-                
-                if (json_is_boolean(default_value)) {
-                    app_value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
-                    app_value.type.Boolean = json_boolean_value(default_value);
-                    printf("  Setting default value: %s (BOOLEAN)\n", 
-                        app_value.type.Boolean ? "true" : "false");
-                }
-                else if (json_is_real(default_value)) {
-                    app_value.tag = BACNET_APPLICATION_TAG_REAL;
-                    app_value.type.Real = (float)json_real_value(default_value);
-                    printf("  Setting default value: %f (REAL)\n", app_value.type.Real);
-                }
-                else if (json_is_integer(default_value)) {
-                    app_value.tag = BACNET_APPLICATION_TAG_ENUMERATED;
-                    app_value.type.Enumerated = (uint32_t)json_integer_value(default_value);
-                    printf("  Setting default value: %u (ENUMERATED)\n", 
-                        app_value.type.Enumerated);
-                }
-                
-                apdu_len = bacapp_encode_application_data(&apdu[0], &app_value);
-                
-                wp_data.object_type = OBJECT_SCHEDULE;
-                wp_data.object_instance = inst;
-                wp_data.object_property = PROP_SCHEDULE_DEFAULT;
-                wp_data.array_index = BACNET_ARRAY_ALL;
-                wp_data.application_data_len = apdu_len;
-                memcpy(wp_data.application_data, &apdu[0], apdu_len);
-                wp_data.priority = BACNET_NO_PRIORITY;
-                wp_data.error_code = ERROR_CODE_SUCCESS;
-                
-                apdu_len = Schedule_Write_Property(&wp_data);
-                if (apdu_len > 0 && wp_data.error_code == ERROR_CODE_SUCCESS) {
-                    printf("  Default value set successfully\n");
-                } else {
-                    printf("  Failed to set default value (error: %d)\n", wp_data.error_code);
-                }
-            }
-            
-            priority = json_object_get(it, "priority");
-            if (json_is_integer(priority)) {
-                BACNET_APPLICATION_DATA_VALUE app_value;
-                BACNET_WRITE_PROPERTY_DATA wp_data;
-                uint8_t apdu[MAX_APDU];
-                int apdu_len;
-                uint8_t prio;
-                
-                prio = (uint8_t)json_integer_value(priority);
-                
-                if (prio > 0 && prio <= 16) {
-                    memset(&app_value, 0, sizeof(app_value));
-                    memset(&wp_data, 0, sizeof(wp_data));
-                    
-                    app_value.tag = BACNET_APPLICATION_TAG_UNSIGNED_INT;
-                    app_value.type.Unsigned_Int = prio;
-                    
-                    apdu_len = bacapp_encode_application_data(&apdu[0], &app_value);
-                    
-                    wp_data.object_type = OBJECT_SCHEDULE;
-                    wp_data.object_instance = inst;
-                    wp_data.object_property = PROP_PRIORITY_FOR_WRITING;
-                    wp_data.array_index = BACNET_ARRAY_ALL;
-                    wp_data.application_data_len = apdu_len;
-                    memcpy(wp_data.application_data, &apdu[0], apdu_len);
-                    wp_data.priority = BACNET_NO_PRIORITY;
-                    wp_data.error_code = ERROR_CODE_SUCCESS;
-                    
-                    apdu_len = Schedule_Write_Property(&wp_data);
-                    if (apdu_len > 0 && wp_data.error_code == ERROR_CODE_SUCCESS) {
-                        printf("  Priority set to: %u\n", prio);
-                    } else {
-                        printf("  Failed to set priority (error: %d)\n", wp_data.error_code);
-                    }
-                }
-            }
-            
-            /* ======== MODIFICATION: weeklySchedule avec support BOOLEAN ======== */
-            /* Configuration du weekly schedule */
-            weekly_schedule = json_object_get(it, "weeklySchedule");
-            if (json_is_array(weekly_schedule)) {
-                printf("  Configuring weekly schedule...\n");
-                for (day_idx = 0; day_idx < json_array_size(weekly_schedule) && day_idx < 7; day_idx++) {
-                    json_t *day_schedule = json_array_get(weekly_schedule, day_idx);
-                    if (json_is_array(day_schedule)) {
-                        BACNET_DAILY_SCHEDULE daily;
-                        size_t time_idx;
-                        
-                        daily.TV_Count = 0;
-                        
-                        for (time_idx = 0; time_idx < json_array_size(day_schedule) && time_idx < 50; time_idx++) {
-                            json_t *time_value = json_array_get(day_schedule, time_idx);
-                            json_t *jtime = json_object_get(time_value, "time");
-                            json_t *jvalue = json_object_get(time_value, "value");
-                            
-                            if (json_is_string(jtime) && (json_is_boolean(jvalue) || json_is_number(jvalue))) {
-                                const char *time_str = json_string_value(jtime);
-                                int hour, minute;
-                                
-                                if (sscanf(time_str, "%d:%d", &hour, &minute) == 2) {
-                                    daily.Time_Values[time_idx].Time.hour = (uint8_t)hour;
-                                    daily.Time_Values[time_idx].Time.min = (uint8_t)minute;
-                                    daily.Time_Values[time_idx].Time.sec = 0;
-                                    daily.Time_Values[time_idx].Time.hundredths = 0;
-                                    
-                                    if (json_is_boolean(jvalue)) {
-                                        daily.Time_Values[time_idx].Value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
-                                        daily.Time_Values[time_idx].Value.type.Boolean = json_boolean_value(jvalue);
-                                    }
-                                    else if (json_is_real(jvalue)) {
-                                        daily.Time_Values[time_idx].Value.tag = BACNET_APPLICATION_TAG_REAL;
-                                        daily.Time_Values[time_idx].Value.type.Real = (float)json_real_value(jvalue);
-                                    }
-                                    else if (json_is_integer(jvalue)) {
-                                        daily.Time_Values[time_idx].Value.tag = BACNET_APPLICATION_TAG_ENUMERATED;
-                                        daily.Time_Values[time_idx].Value.type.Enumerated = (uint32_t)json_integer_value(jvalue);
-                                    }
-                                    
-                                    daily.TV_Count++;
-                                }
-                            }
-                        }
-                        
-                        if (daily.TV_Count > 0) {
-                            bool status = Schedule_Weekly_Schedule_Set(inst, (uint8_t)day_idx, &daily);
-                            if (status) {
-                                printf("    Day %u: %d time values configured\n", 
-                                    (unsigned int)day_idx, daily.TV_Count);
-                            } else {
-                                printf("    Day %u: Configuration failed\n", (unsigned int)day_idx);
-                            }
-                        }
-                    }
-                }
-            }
-            
-            printf("  Schedule %u configuration complete\n", inst);
-            
-            {
-                SCHEDULE_DESCR *desc = Schedule_Object(inst);
-                if (desc) {
-                    desc->Start_Date.year = 1900;
-                    desc->Start_Date.month = 1;
-                    desc->Start_Date.day = 1;
-                    desc->Start_Date.wday = BACNET_WEEKDAY_MONDAY;
-                    
-                    desc->End_Date.year = 2154;
-                    desc->End_Date.month = 12;
-                    desc->End_Date.day = 31;
-                    desc->End_Date.wday = BACNET_WEEKDAY_SUNDAY;
-                    
-                    printf("  Effective period FORCED: always active (1900-2154)\n");
-                    
-                    {
-                        BACNET_TIME time_of_day;
-                        BACNET_WEEKDAY wday;
-                        time_t now;
-                        struct tm *lt;
-                        
-                        now = time(NULL);
-                        lt = localtime(&now);
-                        
-                        time_of_day.hour = (uint8_t)lt->tm_hour;
-                        time_of_day.min = (uint8_t)lt->tm_min;
-                        time_of_day.sec = (uint8_t)lt->tm_sec;
-                        time_of_day.hundredths = 0;
-                        
+        /* ... gardez TOUT le reste de votre code pour les autres types d'objets ... */
+        /* ... JUSQU'AU BLOC SCHEDULE (inclus) ... */
+        /* ... MAIS SUPPRIMEZ le bloc "else if (strcmp(typ, "trendlog") == 0)" ... */
+    }
+    
+    printf("=== Phase 1 complete ===\n");
+    
+    /* ========================================
+     * PHASE 2 : Maintenant configurer les Trendlogs
+     * ======================================== */
+    printf("=== Phase 2: Configuring Trendlogs ===\n");
+    
+    for (i = 0; i < n; i++) {
+        json_t *it = json_array_get(objs, i);
+        const char *typ;
+        json_t *jinst;
+        uint32_t inst;
+        const char *name;
 
-                        if (lt->tm_wday == 0) {
-                            wday = (BACNET_WEEKDAY)7; 
-                        } else {
-                            wday = (BACNET_WEEKDAY)lt->tm_wday;  
-                        }
-                        
-                        Schedule_Recalculate_PV(desc, wday, &time_of_day);
-                        
-                        if (desc->Present_Value.tag == BACNET_APPLICATION_TAG_BOOLEAN) {
-                            printf("  Initial PV: %s (BOOLEAN) at %02u:%02u wday=%u\n",
-                                desc->Present_Value.type.Boolean ? "true" : "false",
-                                time_of_day.hour, time_of_day.min, wday);
-                        } else if (desc->Present_Value.tag == BACNET_APPLICATION_TAG_ENUMERATED) {
-                            printf("  Initial PV: %u (ENUM) at %02u:%02u wday=%u\n",
-                                desc->Present_Value.type.Enumerated,
-                                time_of_day.hour, time_of_day.min, wday);
-                        } else if (desc->Present_Value.tag == BACNET_APPLICATION_TAG_REAL) {
-                            printf("  Initial PV: %.1f (REAL) at %02u:%02u wday=%u\n",
-                                desc->Present_Value.type.Real,
-                                time_of_day.hour, time_of_day.min, wday);
-                        }
-                    }
-                }
-            }
-        } else if (strcmp(typ, "trendlog") == 0) {
+        if (!json_is_object(it)) { continue; }
+
+        typ = json_string_value(json_object_get(it, "type"));
+        
+        /* TRAITER UNIQUEMENT les Trendlogs dans cette phase */
+        if (!typ || strcmp(typ, "trendlog") != 0) {
+            continue;
+        }
+        
+        jinst = json_object_get(it, "instance");
+        inst  = (uint32_t)json_integer_value(jinst);
+        name  = json_string_value(json_object_get(it, "name"));
+
+        if (!json_is_integer(jinst)) {
+            continue;
+        }
+
+        /* VOTRE CODE TRENDLOG ICI (celui qui commence par "Déclarations des pointeurs JSON") */
+        {
             /* Déclarations des pointeurs JSON */
             json_t *j_desc, *j_enable, *j_linked, *j_interval;
             json_t *j_buffer, *j_trigger, *j_cov, *j_stop_full, *j_align;
@@ -1873,6 +1512,9 @@ static int apply_config_from_json(const char *json_text)
             tl_instance = inst;
             tl_name = name;
             
+            /* ... TOUT VOTRE CODE TRENDLOG EXISTANT ... */
+            /* (gardez exactement ce que vous avez) */
+            
             /* Récupérer les autres champs du Trendlog */
             j_desc = json_object_get(it, "description");
             j_enable = json_object_get(it, "enable");
@@ -1883,96 +1525,7 @@ static int apply_config_from_json(const char *json_text)
                 j_linked = json_object_get(it, "linked_object");
             }
             
-            /* Support "logInterval" (camelCase) et "log_interval" (snake_case) */
-            j_interval = json_object_get(it, "logInterval");
-            if (!j_interval) {
-                j_interval = json_object_get(it, "log_interval");
-            }
-            
-            /* Support "bufferSize" (camelCase) et "buffer_size" (snake_case) */
-            j_buffer = json_object_get(it, "bufferSize");
-            if (!j_buffer) {
-                j_buffer = json_object_get(it, "buffer_size");
-            }
-            
-            /* Support "triggerType" (camelCase) et "trigger_type" (snake_case) */
-            j_trigger = json_object_get(it, "triggerType");
-            if (!j_trigger) {
-                j_trigger = json_object_get(it, "trigger_type");
-            }
-            
-            /* Propriétés non encore supportées */
-            j_cov = json_object_get(it, "cov_increment");
-            j_stop_full = json_object_get(it, "stop_when_full");
-            j_align = json_object_get(it, "align_intervals");
-            
-            /* Valeurs par défaut */
-            tl_desc = j_desc ? json_string_value(j_desc) : "";
-            tl_enable = j_enable ? json_boolean_value(j_enable) : true;
-            log_interval = j_interval ? (uint32_t)json_integer_value(j_interval) : 300;
-            buffer_size = j_buffer ? (uint32_t)json_integer_value(j_buffer) : 100;
-            trigger_type = j_trigger ? json_string_value(j_trigger) : "periodic";
-            
-            /* Éviter warnings pour variables non utilisées */
-            (void)j_cov;
-            (void)j_stop_full;
-            (void)j_align;
-            
-            /* Parser l'objet lié (linkedObject) */
-            if (j_linked && json_is_object(j_linked)) {
-                json_t *j_type = json_object_get(j_linked, "type");
-                json_t *j_obj_inst = json_object_get(j_linked, "instance");
-                
-                if (j_type && json_is_string(j_type)) {
-                    const char *type_str = json_string_value(j_type);
-                    
-                    /* Support format avec tiret: "analog-input" ET "ANALOG_INPUT" */
-                    if (strcmp(type_str, "analog-input") == 0 || 
-                        strcmp(type_str, "ANALOG_INPUT") == 0) {
-                        source_type = OBJECT_ANALOG_INPUT;
-                    } else if (strcmp(type_str, "analog-output") == 0 || 
-                               strcmp(type_str, "ANALOG_OUTPUT") == 0) {
-                        source_type = OBJECT_ANALOG_OUTPUT;
-                    } else if (strcmp(type_str, "analog-value") == 0 || 
-                               strcmp(type_str, "ANALOG_VALUE") == 0) {
-                        source_type = OBJECT_ANALOG_VALUE;
-                    } else if (strcmp(type_str, "binary-input") == 0 || 
-                               strcmp(type_str, "BINARY_INPUT") == 0) {
-                        source_type = OBJECT_BINARY_INPUT;
-                    } else if (strcmp(type_str, "binary-output") == 0 || 
-                               strcmp(type_str, "BINARY_OUTPUT") == 0) {
-                        source_type = OBJECT_BINARY_OUTPUT;
-                    } else if (strcmp(type_str, "binary-value") == 0 || 
-                               strcmp(type_str, "BINARY_VALUE") == 0) {
-                        source_type = OBJECT_BINARY_VALUE;
-                    } else if (strcmp(type_str, "multi-state-input") == 0 || 
-                               strcmp(type_str, "MULTI_STATE_INPUT") == 0) {
-                        source_type = OBJECT_MULTI_STATE_INPUT;
-                    } else if (strcmp(type_str, "multi-state-output") == 0 || 
-                               strcmp(type_str, "MULTI_STATE_OUTPUT") == 0) {
-                        source_type = OBJECT_MULTI_STATE_OUTPUT;
-                    } else if (strcmp(type_str, "multi-state-value") == 0 || 
-                               strcmp(type_str, "MULTI_STATE_VALUE") == 0) {
-                        source_type = OBJECT_MULTI_STATE_VALUE;
-                    }
-                }
-                
-                if (j_obj_inst) {
-                    source_instance = (uint32_t)json_integer_value(j_obj_inst);
-                }
-            }
-            
-            /* Affichage et création */
-            printf("\n========================================\n");
-            printf("Trendlog %u: %s\n", tl_instance, tl_name ? tl_name : "(no name)");
-            printf("========================================\n");
-            printf("  Description: %s\n", tl_desc);
-            printf("  Source: %s[%u]\n", 
-                   bactext_object_type_name(source_type), source_instance);
-            printf("  Interval: %u seconds\n", log_interval);
-            printf("  Trigger: %s\n", trigger_type);
-            printf("  Enabled: %s\n", tl_enable ? "YES" : "NO");
-            
+            /* ... reste de votre code trendlog ... */
             /* Créer et configurer le Trendlog */
             if (create_trendlog(tl_instance, tl_name, source_type, source_instance,
                                log_interval, buffer_size, tl_enable)) {
@@ -1982,7 +1535,10 @@ static int apply_config_from_json(const char *json_text)
             }
             printf("========================================\n");
         }
-}
+    }
+    
+    printf("=== Phase 2 complete ===\n");
+    
     json_decref(root);
     printf("Object creation complete.\n");
     printf("  AI: %u, AO: %u, AV: %u\n", 
