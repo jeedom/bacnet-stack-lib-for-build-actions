@@ -69,7 +69,49 @@ static void Schedule_Init_Empty(void)
 
 static void Trend_Log_Init_Empty(void)
 {
-    printf("Trend_Log_Init_Empty: Trendlogs will be created from JSON only\n");
+    unsigned int i;
+    BACNET_WRITE_PROPERTY_DATA wp_data;
+    BACNET_APPLICATION_DATA_VALUE value;
+    int len;
+    
+    printf("Trend_Log_Init_Empty: Disabling all %d Trendlogs...\n", MAX_TREND_LOGS);
+    
+    /* Désactiver TOUS les Trendlogs */
+    for (i = 0; i < MAX_TREND_LOGS; i++) {
+        if (!Trend_Log_Valid_Instance(i)) {
+            continue;
+        }
+        
+        /* ENABLE = FALSE */
+        memset(&wp_data, 0, sizeof(wp_data));
+        memset(&value, 0, sizeof(value));
+        
+        value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
+        value.type.Boolean = false;
+        
+        len = bacapp_encode_application_data(wp_data.application_data, &value);
+        
+        wp_data.object_type = OBJECT_TRENDLOG;
+        wp_data.object_instance = i;
+        wp_data.object_property = PROP_ENABLE;
+        wp_data.array_index = BACNET_ARRAY_ALL;
+        wp_data.application_data_len = len;
+        
+        Trend_Log_Write_Property(&wp_data);
+        
+        /* RECORD_COUNT = 0 (effacer buffer) */
+        memset(&value, 0, sizeof(value));
+        value.tag = BACNET_APPLICATION_TAG_UNSIGNED_INT;
+        value.type.Unsigned_Int = 0;
+        
+        len = bacapp_encode_application_data(wp_data.application_data, &value);
+        wp_data.object_property = PROP_RECORD_COUNT;
+        wp_data.application_data_len = len;
+        
+        Trend_Log_Write_Property(&wp_data);
+    }
+    
+    printf("Trend_Log_Init_Empty: All Trendlogs disabled and cleared.\n");
 }
 
 static void print_timestamp_log(const char *message)
@@ -189,7 +231,41 @@ static bool create_trendlog(uint32_t instance, const char *name,
     wp_data.array_index = BACNET_ARRAY_ALL;
     
     /* ========================================
-     * 1. LOG_DEVICE_OBJECT_PROPERTY
+     * 0. DÉSACTIVER D'ABORD (CRITIQUE)
+     * ======================================== */
+    memset(&value, 0, sizeof(value));
+    value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
+    value.type.Boolean = false;
+    
+    len = bacapp_encode_application_data(wp_data.application_data, &value);
+    wp_data.object_property = PROP_ENABLE;
+    wp_data.application_data_len = len;
+    
+    if (!Trend_Log_Write_Property(&wp_data)) {
+        fprintf(stderr, "  ⚠️  Warning: Failed to disable first (continuing anyway)\n");
+    } else {
+        printf("  ✓ Disabled first\n");
+    }
+    
+    /* ========================================
+     * 1. EFFACER BUFFER D'ABORD
+     * ======================================== */
+    memset(&value, 0, sizeof(value));
+    value.tag = BACNET_APPLICATION_TAG_UNSIGNED_INT;
+    value.type.Unsigned_Int = 0;
+    
+    len = bacapp_encode_application_data(wp_data.application_data, &value);
+    wp_data.object_property = PROP_RECORD_COUNT;
+    wp_data.application_data_len = len;
+    
+    if (!Trend_Log_Write_Property(&wp_data)) {
+        fprintf(stderr, "  ✗ Failed to clear RECORD_COUNT\n");
+    } else {
+        printf("  ✓ Buffer cleared (RECORD_COUNT = 0)\n");
+    }
+    
+    /* ========================================
+     * 2. LOG_DEVICE_OBJECT_PROPERTY
      * ======================================== */
     source_ref.objectIdentifier.type = source_type;
     source_ref.objectIdentifier.instance = source_instance;
@@ -219,7 +295,7 @@ static bool create_trendlog(uint32_t instance, const char *name,
     }
     
     /* ========================================
-     * 2. LOGGING_TYPE = POLLED
+     * 3. LOGGING_TYPE = POLLED
      * ======================================== */
     memset(&value, 0, sizeof(value));
     value.tag = BACNET_APPLICATION_TAG_ENUMERATED;
@@ -237,7 +313,7 @@ static bool create_trendlog(uint32_t instance, const char *name,
     }
     
     /* ========================================
-     * 3. LOG_INTERVAL (en centisecondes)
+     * 4. LOG_INTERVAL (en centisecondes)
      * ======================================== */
     if (log_interval > 0) {
         memset(&value, 0, sizeof(value));
@@ -258,7 +334,7 @@ static bool create_trendlog(uint32_t instance, const char *name,
     }
     
     /* ========================================
-     * 4. ALIGN_INTERVALS = TRUE
+     * 5. ALIGN_INTERVALS = TRUE
      * ======================================== */
     memset(&value, 0, sizeof(value));
     value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
@@ -276,7 +352,7 @@ static bool create_trendlog(uint32_t instance, const char *name,
     }
     
     /* ========================================
-     * 5. STOP_WHEN_FULL = FALSE (circulaire)
+     * 6. STOP_WHEN_FULL = FALSE (circulaire)
      * ======================================== */
     memset(&value, 0, sizeof(value));
     value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
@@ -291,24 +367,6 @@ static bool create_trendlog(uint32_t instance, const char *name,
         success = false;
     } else {
         printf("  ✓ Stop When Full: NO (circular)\n");
-    }
-    
-    /* ========================================
-     * 6. RECORD_COUNT = 0 (effacer buffer)
-     * ======================================== */
-    memset(&value, 0, sizeof(value));
-    value.tag = BACNET_APPLICATION_TAG_UNSIGNED_INT;
-    value.type.Unsigned_Int = 0;
-    
-    len = bacapp_encode_application_data(wp_data.application_data, &value);
-    wp_data.object_property = PROP_RECORD_COUNT;
-    wp_data.application_data_len = len;
-    
-    if (!Trend_Log_Write_Property(&wp_data)) {
-        fprintf(stderr, "  ✗ Failed to clear RECORD_COUNT\n");
-        success = false;
-    } else {
-        printf("  ✓ Buffer cleared (RECORD_COUNT = 0)\n");
     }
     
     /* ========================================
