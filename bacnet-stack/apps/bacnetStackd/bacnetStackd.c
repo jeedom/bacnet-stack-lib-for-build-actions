@@ -2828,9 +2828,7 @@ static void clear_all_objects(void)
     printf("  Schedules cleared: Schedule_Count() = %u\n", Schedule_Count());
     
     /* Vider les Trendlogs */
-    printf("Clearing all %d Trendlogs...\n", MAX_TREND_LOGS);
-    clear_all_trendlogs();
-    printf("  Trendlogs cleared: Trend_Log_Count() = %u\n", Trend_Log_Count());
+    printf("  Trendlogs already cleared.\n");
     
     printf("=== Initialization objects cleared ===\n");
 }
@@ -2907,7 +2905,6 @@ int main(int argc, char *argv[])
 
     if (g_config_file[0]) {
         clear_all_objects();
-        
         load_config_from_file();
     }
     mstimer_set(&Trendlog_Timer, 1000);
