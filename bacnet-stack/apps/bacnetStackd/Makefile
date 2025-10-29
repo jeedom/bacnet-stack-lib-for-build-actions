@@ -11,6 +11,7 @@ TARGET_BIN = $(TARGET)
 BACNET_OBJECT_DIR = $(BACNET_SRC_DIR)/bacnet/basic/object
 
 SRC = bacnetStackd.c \
+      trendlog_override.c \
       $(BACNET_OBJECT_DIR)/device.c \
       $(BACNET_OBJECT_DIR)/ai.c \
       $(BACNET_OBJECT_DIR)/ao.c \
