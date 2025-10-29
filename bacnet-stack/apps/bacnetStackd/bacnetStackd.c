@@ -58,16 +58,18 @@
 
 extern SCHEDULE_DESCR Schedule_Descr[MAX_SCHEDULES];
 
-/* Prototype pour initialisation schedules */
 static void Init_Schedules(void);
 
-/* Prototype nécessaire pour save_current_config */
 static int save_current_config(void);
 
 static void Schedule_Init_Empty(void)
 {
     printf("Schedule_Init_Empty: Schedules will be created from JSON only\n");
-    /* Ne rien faire - pas d'initialisation des Schedules */
+}
+
+static void Trend_Log_Init_Empty(void)
+{
+    printf("Trend_Log_Init_Empty: Trendlogs will be created from JSON only\n");
 }
 
 static void print_timestamp_log(const char *message)
@@ -547,7 +549,7 @@ static object_functions_t My_Object_Table[] = {
       NULL },
 
     { OBJECT_TRENDLOG,
-      Trend_Log_Init,
+      Trend_Log_Init_Empty,
       Trend_Log_Count,
       Trend_Log_Index_To_Instance,
       Trend_Log_Valid_Instance,
@@ -2630,19 +2632,28 @@ static void print_usage(const char *filename)
     printf("  --config PATH:   Fichier de configuration JSON pour persistance\n");
 }
 
-static void clear_all_schedules(void)
+static void clear_all_objects(void)
 {
     unsigned int i;
     
-    printf("Clearing all %d Schedules...\n", MAX_SCHEDULES);
-    printf("  Before clear: Schedule_Count() = %u\n", Schedule_Count());
+    printf("=== Clearing initialization objects ===\n");
     
+    /* Vider les Schedules */
+    printf("Clearing all %d Schedules...\n", MAX_SCHEDULES);
     for (i = 0; i < MAX_SCHEDULES; i++) {
         memset(&Schedule_Descr[i], 0, sizeof(SCHEDULE_DESCR));
     }
+    printf("  Schedules cleared: Schedule_Count() = %u\n", Schedule_Count());
     
-    printf("  After clear: Schedule_Count() = %u\n", Schedule_Count());
-    printf("All Schedules cleared\n");
+    /* AJOUT : Vider les Trendlogs */
+    printf("Clearing all %d Trendlogs...\n", MAX_TREND_LOGS);
+    /* Note: Trend_Log n'a pas de tableau externe comme Schedule_Descr
+     * Donc on ne peut pas faire memset directement.
+     * Heureusement, avec Trend_Log_Init_Empty(), ils ne sont pas initialisés !
+     */
+    printf("  Trendlogs cleared: Trend_Log_Count() = %u\n", Trend_Log_Count());
+    
+    printf("=== Initialization objects cleared ===\n");
 }
 /* ===== MAIN ===== */
 int main(int argc, char *argv[])
@@ -2716,8 +2727,7 @@ int main(int argc, char *argv[])
     signal(SIGTERM, sig_handler);
 
     if (g_config_file[0]) {
-        /* Vider les 10 Schedules créés par défaut au démarrage */
-        clear_all_schedules();
+        clear_all_objects();
         
         load_config_from_file();
     }
