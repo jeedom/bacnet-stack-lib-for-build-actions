@@ -8,6 +8,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "bacnet/basic/object/trendlog.h"
 
 /**
  * @brief Vide tous les Trendlogs
