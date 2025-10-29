@@ -211,7 +211,8 @@ static bool create_trendlog(uint32_t instance, const char *name,
     int len;
     bool success;
     
-    (void)buffer_size;  /* BUFFER_SIZE est read-only */
+    (void)buffer_size;
+    (void)name;  /* Le nom n'est pas utilisé pour les Trendlogs */
     
     success = true;
     
@@ -236,9 +237,8 @@ static bool create_trendlog(uint32_t instance, const char *name,
     wp_data.array_index = BACNET_ARRAY_ALL;
     
     /* ========================================
-     * ÉTAPE 0 : DÉSACTIVER D'ABORD
+     * ÉTAPE 1 : DÉSACTIVER D'ABORD
      * ======================================== */
-    memset(&value, 0, sizeof(value));
     value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
     value.type.Boolean = false;
     
@@ -253,7 +253,7 @@ static bool create_trendlog(uint32_t instance, const char *name,
     }
     
     /* ========================================
-     * ÉTAPE 1 : EFFACER BUFFER
+     * ÉTAPE 2 : EFFACER BUFFER
      * ======================================== */
     memset(&value, 0, sizeof(value));
     value.tag = BACNET_APPLICATION_TAG_UNSIGNED_INT;
@@ -270,7 +270,56 @@ static bool create_trendlog(uint32_t instance, const char *name,
     }
     
     /* ========================================
-     * ÉTAPE 2 : LOGGING_TYPE = POLLED (AVANT LOG_DEVICE_OBJECT_PROPERTY)
+     * ÉTAPE 3 : VÉRIFIER QUE L'OBJET SOURCE EXISTE
+     * ======================================== */
+    bool source_exists = false;
+    
+    switch (source_type) {
+        case OBJECT_ANALOG_INPUT:
+            source_exists = Analog_Input_Valid_Instance(source_instance);
+            break;
+        case OBJECT_ANALOG_OUTPUT:
+            source_exists = Analog_Output_Valid_Instance(source_instance);
+            break;
+        case OBJECT_ANALOG_VALUE:
+            source_exists = Analog_Value_Valid_Instance(source_instance);
+            break;
+        case OBJECT_BINARY_INPUT:
+            source_exists = Binary_Input_Valid_Instance(source_instance);
+            break;
+        case OBJECT_BINARY_OUTPUT:
+            source_exists = Binary_Output_Valid_Instance(source_instance);
+            break;
+        case OBJECT_BINARY_VALUE:
+            source_exists = Binary_Value_Valid_Instance(source_instance);
+            break;
+        case OBJECT_MULTI_STATE_INPUT:
+            source_exists = Multistate_Input_Valid_Instance(source_instance);
+            break;
+        case OBJECT_MULTI_STATE_OUTPUT:
+            source_exists = Multistate_Output_Valid_Instance(source_instance);
+            break;
+        case OBJECT_MULTI_STATE_VALUE:
+            source_exists = Multistate_Value_Valid_Instance(source_instance);
+            break;
+        default:
+            source_exists = false;
+            break;
+    }
+    
+    if (!source_exists) {
+        fprintf(stderr, "  ✗ ERROR: Source object %s[%u] does not exist!\n",
+                bactext_object_type_name(source_type), source_instance);
+        fprintf(stderr, "  → Trendlog cannot be configured without a valid source\n");
+        printf("═══════════════════════════════════════════════════════\n\n");
+        return false;
+    } else {
+        printf("  ✓ Source object %s[%u] exists\n",
+               bactext_object_type_name(source_type), source_instance);
+    }
+    
+    /* ========================================
+     * ÉTAPE 4 : LOGGING_TYPE = POLLED
      * ======================================== */
     memset(&value, 0, sizeof(value));
     value.tag = BACNET_APPLICATION_TAG_ENUMERATED;
@@ -288,7 +337,7 @@ static bool create_trendlog(uint32_t instance, const char *name,
     }
     
     /* ========================================
-     * ÉTAPE 3 : LOG_DEVICE_OBJECT_PROPERTY (MAINTENANT)
+     * ÉTAPE 5 : LOG_DEVICE_OBJECT_PROPERTY
      * ======================================== */
     memset(&source_ref, 0, sizeof(source_ref));
     source_ref.objectIdentifier.type = source_type;
@@ -298,35 +347,35 @@ static bool create_trendlog(uint32_t instance, const char *name,
     source_ref.deviceIdentifier.type = OBJECT_DEVICE;
     source_ref.deviceIdentifier.instance = Device_Object_Instance_Number();
     
-    /* Encoder directement dans wp_data.application_data */
+    /* Encoder dans un buffer temporaire d'abord */
     len = bacapp_encode_device_obj_property_ref(wp_data.application_data, &source_ref);
     if (len <= 0) {
         fprintf(stderr, "  ✗ Failed to encode LOG_DEVICE_OBJECT_PROPERTY\n");
-        return false;
-    }
-    
-    wp_data.object_property = PROP_LOG_DEVICE_OBJECT_PROPERTY;
-    wp_data.application_data_len = len;
-    
-    if (!Trend_Log_Write_Property(&wp_data)) {
-        fprintf(stderr, "  ✗ Failed to set LOG_DEVICE_OBJECT_PROPERTY\n");
-        fprintf(stderr, "    Error: class=%d code=%d\n", 
-                wp_data.error_class, wp_data.error_code);
-        fprintf(stderr, "    Source: %s[%u]\n",
-                bactext_object_type_name(source_type), source_instance);
         success = false;
     } else {
-        printf("  ✓ Linked to: %s[%u].PRESENT_VALUE\n", 
-               bactext_object_type_name(source_type), source_instance);
+        wp_data.object_property = PROP_LOG_DEVICE_OBJECT_PROPERTY;
+        wp_data.application_data_len = len;
+        
+        if (!Trend_Log_Write_Property(&wp_data)) {
+            fprintf(stderr, "  ✗ Failed to set LOG_DEVICE_OBJECT_PROPERTY\n");
+            fprintf(stderr, "    Error: class=%d code=%d\n", 
+                    wp_data.error_class, wp_data.error_code);
+            fprintf(stderr, "    Source: %s[%u]\n",
+                    bactext_object_type_name(source_type), source_instance);
+            success = false;
+        } else {
+            printf("  ✓ Linked to: %s[%u].PRESENT_VALUE\n", 
+                   bactext_object_type_name(source_type), source_instance);
+        }
     }
     
     /* ========================================
-     * ÉTAPE 4 : LOG_INTERVAL (en centisecondes)
+     * ÉTAPE 6 : LOG_INTERVAL (en centisecondes)
      * ======================================== */
-    if (log_interval > 0) {
+    if (log_interval > 0 && success) {
         memset(&value, 0, sizeof(value));
         value.tag = BACNET_APPLICATION_TAG_UNSIGNED_INT;
-        value.type.Unsigned_Int = log_interval * 100;  /* Secondes -> centisecondes */
+        value.type.Unsigned_Int = log_interval * 100;
         
         len = bacapp_encode_application_data(wp_data.application_data, &value);
         wp_data.object_property = PROP_LOG_INTERVAL;
@@ -342,73 +391,79 @@ static bool create_trendlog(uint32_t instance, const char *name,
     }
     
     /* ========================================
-     * ÉTAPE 5 : ALIGN_INTERVALS = TRUE
+     * ÉTAPE 7 : ALIGN_INTERVALS = TRUE
      * ======================================== */
-    memset(&value, 0, sizeof(value));
-    value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
-    value.type.Boolean = true;
-    
-    len = bacapp_encode_application_data(wp_data.application_data, &value);
-    wp_data.object_property = PROP_ALIGN_INTERVALS;
-    wp_data.application_data_len = len;
-    
-    if (!Trend_Log_Write_Property(&wp_data)) {
-        fprintf(stderr, "  ✗ Failed to set ALIGN_INTERVALS\n");
-        success = false;
-    } else {
-        printf("  ✓ Align Intervals: YES\n");
+    if (success) {
+        memset(&value, 0, sizeof(value));
+        value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
+        value.type.Boolean = true;
+        
+        len = bacapp_encode_application_data(wp_data.application_data, &value);
+        wp_data.object_property = PROP_ALIGN_INTERVALS;
+        wp_data.application_data_len = len;
+        
+        if (!Trend_Log_Write_Property(&wp_data)) {
+            fprintf(stderr, "  ✗ Failed to set ALIGN_INTERVALS\n");
+            success = false;
+        } else {
+            printf("  ✓ Align Intervals: YES\n");
+        }
     }
     
     /* ========================================
-     * ÉTAPE 6 : STOP_WHEN_FULL = FALSE (circulaire)
+     * ÉTAPE 8 : STOP_WHEN_FULL = FALSE
      * ======================================== */
-    memset(&value, 0, sizeof(value));
-    value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
-    value.type.Boolean = false;
-    
-    len = bacapp_encode_application_data(wp_data.application_data, &value);
-    wp_data.object_property = PROP_STOP_WHEN_FULL;
-    wp_data.application_data_len = len;
-    
-    if (!Trend_Log_Write_Property(&wp_data)) {
-        fprintf(stderr, "  ✗ Failed to set STOP_WHEN_FULL\n");
-        success = false;
-    } else {
-        printf("  ✓ Stop When Full: NO (circular)\n");
+    if (success) {
+        memset(&value, 0, sizeof(value));
+        value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
+        value.type.Boolean = false;
+        
+        len = bacapp_encode_application_data(wp_data.application_data, &value);
+        wp_data.object_property = PROP_STOP_WHEN_FULL;
+        wp_data.application_data_len = len;
+        
+        if (!Trend_Log_Write_Property(&wp_data)) {
+            fprintf(stderr, "  ✗ Failed to set STOP_WHEN_FULL\n");
+            success = false;
+        } else {
+            printf("  ✓ Stop When Full: NO (circular)\n");
+        }
     }
     
     /* ========================================
-     * ÉTAPE 7 : ENABLE (EN DERNIER)
+     * ÉTAPE 9 : ENABLE (EN DERNIER, SEULEMENT SI TOUT OK)
      * ======================================== */
-    memset(&value, 0, sizeof(value));
-    value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
-    value.type.Boolean = enable;
-    
-    len = bacapp_encode_application_data(wp_data.application_data, &value);
-    wp_data.object_property = PROP_ENABLE;
-    wp_data.application_data_len = len;
-    
-    if (!Trend_Log_Write_Property(&wp_data)) {
-        fprintf(stderr, "  ✗ Failed to set ENABLE\n");
-        success = false;
-    } else {
-        printf("  ✓ Enabled: %s\n", enable ? "YES ✓" : "NO");
+    if (success && enable) {
+        memset(&value, 0, sizeof(value));
+        value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
+        value.type.Boolean = true;
+        
+        len = bacapp_encode_application_data(wp_data.application_data, &value);
+        wp_data.object_property = PROP_ENABLE;
+        wp_data.application_data_len = len;
+        
+        if (!Trend_Log_Write_Property(&wp_data)) {
+            fprintf(stderr, "  ✗ Failed to set ENABLE\n");
+            success = false;
+        } else {
+            printf("  ✓ Enabled: YES ✓\n");
+        }
+    } else if (!enable) {
+        printf("  ○ Enabled: NO (as requested)\n");
     }
     
     /* ========================================
      * Résumé
      * ======================================== */
+    printf("═══════════════════════════════════════════════════════\n");
     if (success) {
-        printf("═══════════════════════════════════════════════════════\n");
         printf("✓ Trendlog %u configured successfully\n", instance);
         printf("  Ready to log data from %s[%u]\n", 
                bactext_object_type_name(source_type), source_instance);
-        printf("═══════════════════════════════════════════════════════\n\n");
     } else {
-        printf("═══════════════════════════════════════════════════════\n");
         printf("✗ Trendlog %u configuration FAILED\n", instance);
-        printf("═══════════════════════════════════════════════════════\n\n");
     }
+    printf("═══════════════════════════════════════════════════════\n\n");
     
     return success;
 }
