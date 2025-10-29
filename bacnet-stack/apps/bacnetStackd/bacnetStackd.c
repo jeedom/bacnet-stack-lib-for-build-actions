@@ -2844,7 +2844,7 @@ int main(int argc, char *argv[])
     const char *envp;
     int argi = 1;
     char buf[256];
-    static uint16_t trendlog_seconds = 0; 
+    static MSTIMER_HANDLE Trendlog_Timer = { 0 };
     printf("BACnet Stack Server (Jeedom)\n");
     printf("Version: %s\n", BACNET_VERSION_TEXT);
 
@@ -2909,7 +2909,7 @@ int main(int argc, char *argv[])
         
         load_config_from_file();
     }
-
+    mstimer_set(&Trendlog_Timer, 1000);
     Send_I_Am(&Rx_Buf[0]);
     printf("I-Am broadcasted\n");
 
@@ -2971,12 +2971,10 @@ int main(int argc, char *argv[])
             }
         }
 
-        trendlog_seconds++;
-        if (trendlog_seconds >= 60) {
-            trend_log_timer(60); 
-            trendlog_seconds = 0;
+        if (mstimer_expired(&Trendlog_Timer)) {
+            mstimer_reset(&Trendlog_Timer);
+            trend_log_timer(1);  
         }
-
 
 
 
