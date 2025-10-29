@@ -43,6 +43,7 @@
 #include "bacnet/basic/object/msv.h"
 #include "bacnet/basic/object/schedule.h"
 #include "bacnet/basic/object/trendlog.h"
+#include "trendlog_override.h"
 #include "schedule_override.h"
 #include "bacnet/basic/object/device.h"
 #include "bacnet/basic/services.h"
@@ -57,6 +58,7 @@
 #include "bacnet/basic/tsm/tsm.h"
 
 extern SCHEDULE_DESCR Schedule_Descr[MAX_SCHEDULES];
+extern TREND_LOG_DESCR Trend_Logs[];
 
 static void Init_Schedules(void);
 
@@ -2845,10 +2847,7 @@ static void clear_all_objects(void)
     
     /* AJOUT : Vider les Trendlogs */
     printf("Clearing all %d Trendlogs...\n", MAX_TREND_LOGS);
-    /* Note: Trend_Log n'a pas de tableau externe comme Schedule_Descr
-     * Donc on ne peut pas faire memset directement.
-     * Heureusement, avec Trend_Log_Init_Empty(), ils ne sont pas initialisés !
-     */
+    clear_all_trendlogs();
     printf("  Trendlogs cleared: Trend_Log_Count() = %u\n", Trend_Log_Count());
     
     printf("=== Initialization objects cleared ===\n");
