@@ -1,11 +1,6 @@
 /**
  * @file trendlog_override.c
  * @brief Implémentation personnalisée pour la gestion des Trendlogs BACnet Stack
- * @author Custom implementation for bacnetStackServer plugin
- * @date 2025
- * 
- * Ce fichier fournit des fonctions pour gérer dynamiquement les Trendlogs
- * et désactiver leur initialisation automatique par défaut.
  */
 
 #include <stdbool.h>
@@ -18,7 +13,6 @@
 
 /**
  * @brief Vide un Trendlog spécifique en utilisant l'API publique
- * @param instance Instance du Trendlog à vider
  */
 static void clear_single_trendlog(uint32_t instance)
 {
@@ -30,16 +24,14 @@ static void clear_single_trendlog(uint32_t instance)
         return;
     }
     
-    /* Initialiser les structures */
     memset(&wp_data, 0, sizeof(wp_data));
     memset(&value, 0, sizeof(value));
     
-    /* Configuration de base du Write Property */
     wp_data.object_type = OBJECT_TRENDLOG;
     wp_data.object_instance = instance;
     wp_data.array_index = BACNET_ARRAY_ALL;
     
-    /* 1. Désactiver le Trendlog */
+    /* Désactiver */
     value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
     value.type.Boolean = false;
     
@@ -49,7 +41,7 @@ static void clear_single_trendlog(uint32_t instance)
     
     Trend_Log_Write_Property(&wp_data);
     
-    /* 2. Effacer le buffer (RECORD_COUNT = 0) */
+    /* Effacer buffer */
     memset(&value, 0, sizeof(value));
     value.tag = BACNET_APPLICATION_TAG_UNSIGNED_INT;
     value.type.Unsigned_Int = 0;
@@ -63,9 +55,6 @@ static void clear_single_trendlog(uint32_t instance)
 
 /**
  * @brief Vide tous les Trendlogs
- * 
- * Cette fonction réinitialise tous les Trendlogs à leur état vide.
- * Doit être appelée avant de charger une nouvelle configuration.
  */
 void clear_all_trendlogs(void)
 {
@@ -77,27 +66,16 @@ void clear_all_trendlogs(void)
 }
 
 /**
- * @brief Fonction stub pour Trendlog_Delete (si nécessaire dans le futur)
- * @param object_instance Instance du Trendlog à supprimer
- * @return true si la suppression a réussi, false sinon
- * 
- * Note: Cette fonction est un stub car la librairie BACnet Stack ne fournit pas
- * de fonction de suppression. Pour l'instant, on utilise clear_all_trendlogs()
- * pour réinitialiser tous les Trendlogs avant de charger une nouvelle config.
+ * @brief Fonction stub pour Trendlog_Delete
  */
 bool Trendlog_Delete(uint32_t object_instance)
 {
-    (void)object_instance; /* Éviter warning unused parameter */
-    
-    /* Pour l'instant, cette fonction ne fait rien */
-    /* Si besoin dans le futur, on pourra implémenter une vraie suppression */
+    (void)object_instance;
     return false;
 }
 
 /**
  * @brief Fonction stub pour supprimer tous les Trendlogs
- * 
- * Note: Utiliser clear_all_trendlogs() à la place
  */
 void Trendlog_Delete_All(void)
 {

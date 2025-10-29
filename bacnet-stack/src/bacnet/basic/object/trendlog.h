@@ -28,6 +28,13 @@ typedef struct tl_error {
     uint16_t usCode;
 } TL_ERROR;
 
+bool Trend_Log_Configure_Direct(
+    uint32_t instance,
+    BACNET_OBJECT_TYPE source_type,
+    uint32_t source_instance,
+    uint32_t log_interval_seconds,
+    bool enable);
+
 /* Bit string of up to 32 bits for Trend Log storage */
 
 typedef struct tl_bits {
