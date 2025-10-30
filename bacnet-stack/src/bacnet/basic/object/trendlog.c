@@ -8,6 +8,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
+#include <time.h>
 /* BACnet Stack defines - first */
 #include "bacnet/bacdef.h"
 /* BACnet Stack API */
@@ -940,7 +941,6 @@ bacnet_time_t TL_BAC_Time_To_Local(const BACNET_DATE_TIME *bdatetime)
 
 void TL_Local_Time_To_BAC(BACNET_DATE_TIME *bdatetime, bacnet_time_t seconds)
 {
-
     struct tm *time_info;
     time_t raw_time = (time_t)seconds;
     
@@ -958,7 +958,6 @@ void TL_Local_Time_To_BAC(BACNET_DATE_TIME *bdatetime, bacnet_time_t seconds)
         bdatetime->time.hundredths = 0;
     }
 }
-
 /****************************************************************************
  * Build a list of Trend Log entries from the Log Buffer property as        *
  * required for the ReadsRange functionality.                               *
@@ -1835,7 +1834,7 @@ bool Trend_Log_Configure_Direct(
     /* Configuration des paramètres */
     log->LoggingType = LOGGING_TYPE_POLLED;
     log->ulLogInterval = log_interval_seconds;
-    log->bAlignIntervals = false;  // ← Changé à false pour simplifier
+    log->bAlignIntervals = false;
     log->ulIntervalOffset = 0;
     log->bStopWhenFull = false;
     log->bEnable = enable;
