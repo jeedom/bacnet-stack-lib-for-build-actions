@@ -1632,17 +1632,33 @@ static void TL_fetch_property(int iLog)
     CurrentLog->tLastDataTime = TempRec.tTimeStamp;
     TempRec.ucStatus = 0;
 
+     printf("\n=== TL_fetch_property(%d) ===\n", iLog);
+    printf("Source: %s:%u property:%u\n",
+           bactext_object_type_name(LogInfo[iLog].Source.objectIdentifier.type),
+           LogInfo[iLog].Source.objectIdentifier.instance,
+           LogInfo[iLog].Source.propertyIdentifier);
+
     iLen = local_read_property(
         ValueBuf, StatusBuf, &LogInfo[iLog].Source, &error_class, &error_code);
+        printf("TL_fetch_property(%d): object=%s:%u, iLen=%d, error_class=%d, error_code=%d\n",
+           iLog,
+           bactext_object_type_name(LogInfo[iLog].Source.objectIdentifier.type),
+           LogInfo[iLog].Source.objectIdentifier.instance,
+           iLen,
+           error_class,
+           error_code);
     if (iLen < 0) {
         /* Insert error code into log */
+        printf("  -> Inserting ERROR into log\n");
         TempRec.Datum.Error.usClass = error_class;
         TempRec.Datum.Error.usCode = error_code;
         TempRec.ucRecType = TL_TYPE_ERROR;
     } else {
+         printf("  -> Success, decoding value\n");
         /* Decode data returned and see if we can fit it into the log */
         iLen =
             decode_tag_number_and_value(ValueBuf, &tag_number, &len_value_type);
+         printf("  tag_number=%u, len_value_type=%u\n", tag_number, len_value_type);
         switch (tag_number) {
             case BACNET_APPLICATION_TAG_NULL:
                 TempRec.ucRecType = TL_TYPE_NULL;
