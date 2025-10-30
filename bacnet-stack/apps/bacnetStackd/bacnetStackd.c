@@ -2289,6 +2289,8 @@ static char* handle_cmd_trendlog_data_json(uint32_t instance, int count)
     BACNET_APPLICATION_DATA_VALUE value;
     int decode_len;
     unsigned int i;
+    unsigned int record_count_value = 0;
+    unsigned int start_index = 1;
     
     if (!Trend_Log_Valid_Instance(instance)) {
         fprintf(stderr, "ERROR: Trendlog instance %u not valid\n", instance);
@@ -2296,7 +2298,7 @@ static char* handle_cmd_trendlog_data_json(uint32_t instance, int count)
         
         char *json_str = json_dumps(root, JSON_INDENT(2));
         json_decref(root);
-        return json_str;  /* ← Retourner le JSON d'erreur au lieu de -1 */
+        return json_str;
     }
     
     if (count <= 0) count = 10;
@@ -2324,52 +2326,58 @@ static char* handle_cmd_trendlog_data_json(uint32_t instance, int count)
                                                     rpdata.application_data_len,
                                                     &value);
         if (decode_len > 0 && value.tag == BACNET_APPLICATION_TAG_UNSIGNED_INT) {
-            unsigned int record_count = value.type.Unsigned_Int;
-            json_object_set_new(root, "total_records", json_integer(record_count));
-            printf("Total records available: %u\n", record_count);
+            record_count_value = value.type.Unsigned_Int;
+            json_object_set_new(root, "total_records", json_integer(record_count_value));
+            printf("Total records available: %u\n", record_count_value);
             
-            if (record_count == 0) {
+            if (record_count_value == 0) {
                 printf("No data logged yet.\n");
                 json_object_set_new(root, "data", data_array);
                 
                 char *json_str = json_dumps(root, JSON_INDENT(2));
-                printf("\n%s\n", json_str);
-                free(json_str);
                 json_decref(root);
-                return 0;
+                return json_str;
             }
             
             /* Limiter count au nombre réel d'entrées */
-            if ((unsigned int)count > record_count) {
-                count = record_count;
+            if ((unsigned int)count > record_count_value) {
+                count = record_count_value;
             }
         }
     }
     
     /* ========================================
+     * Calculer l'index de départ (pour les N dernières entrées)
+     * ======================================== */
+    if (record_count_value >= (unsigned int)count) {
+        start_index = record_count_value - count + 1;
+    } else {
+        start_index = 1;
+    }
+    
+    printf("Reading last %d entries (index %u to %u)...\n\n", 
+           count, start_index, record_count_value);
+    
+    /* ========================================
      * Lire LOG_BUFFER pour récupérer les données
      * ======================================== */
-    printf("Reading last %d entries...\n\n", count);
-    
-    /* Lire les N dernières entrées une par une */
     for (i = 0; i < (unsigned int)count; i++) {
         json_t *entry = json_object();
         
-        /* INDEX : -1 = dernière entrée, -2 = avant-dernière, etc. */
-        int index = -(count - i);
+        /* ⭐ INDEX POSITIF : commence à start_index */
+        int index = start_index + i;
         
         memset(&rpdata, 0, sizeof(rpdata));
         rpdata.object_type = OBJECT_TRENDLOG;
         rpdata.object_instance = instance;
         rpdata.object_property = PROP_LOG_BUFFER;
-        rpdata.array_index = index;  /* Indexation négative */
+        rpdata.array_index = index;  /* ⭐ Index POSITIF */
         rpdata.application_data = apdu;
         rpdata.application_data_len = sizeof(apdu);
         
         apdu_len = Trend_Log_Read_Property(&rpdata);
         
         if (apdu_len > 0) {
-            BACNET_LOG_RECORD log_record;
             uint8_t *apdu_ptr = rpdata.application_data;
             int total_len = 0;
             
@@ -2415,37 +2423,37 @@ static char* handle_cmd_trendlog_data_json(uint32_t instance, int count)
                         case BACNET_APPLICATION_TAG_REAL:
                             json_object_set_new(entry, "value", json_real(value.type.Real));
                             json_object_set_new(entry, "type", json_string("REAL"));
-                            printf("[%d] %.2f\n", i+1, value.type.Real);
+                            printf("[%u] %.2f\n", index, value.type.Real);
                             break;
                             
                         case BACNET_APPLICATION_TAG_BOOLEAN:
                             json_object_set_new(entry, "value", json_boolean(value.type.Boolean));
                             json_object_set_new(entry, "type", json_string("BOOLEAN"));
-                            printf("[%d] %s\n", i+1, value.type.Boolean ? "TRUE" : "FALSE");
+                            printf("[%u] %s\n", index, value.type.Boolean ? "TRUE" : "FALSE");
                             break;
                             
                         case BACNET_APPLICATION_TAG_UNSIGNED_INT:
                             json_object_set_new(entry, "value", json_integer(value.type.Unsigned_Int));
                             json_object_set_new(entry, "type", json_string("UNSIGNED_INT"));
-                            printf("[%d] %u\n", i+1, (unsigned int)value.type.Unsigned_Int);
+                            printf("[%u] %u\n", index, (unsigned int)value.type.Unsigned_Int);
                             break;
                             
                         case BACNET_APPLICATION_TAG_SIGNED_INT:
                             json_object_set_new(entry, "value", json_integer(value.type.Signed_Int));
                             json_object_set_new(entry, "type", json_string("SIGNED_INT"));
-                            printf("[%d] %d\n", i+1, value.type.Signed_Int);
+                            printf("[%u] %d\n", index, value.type.Signed_Int);
                             break;
                             
                         case BACNET_APPLICATION_TAG_ENUMERATED:
                             json_object_set_new(entry, "value", json_integer(value.type.Enumerated));
                             json_object_set_new(entry, "type", json_string("ENUMERATED"));
-                            printf("[%d] %u\n", i+1, (unsigned int)value.type.Enumerated);
+                            printf("[%u] %u\n", index, (unsigned int)value.type.Enumerated);
                             break;
                             
                         default:
                             json_object_set_new(entry, "value", json_null());
                             json_object_set_new(entry, "type", json_string("UNKNOWN"));
-                            printf("[%d] (unknown type %d)\n", i+1, value.tag);
+                            printf("[%u] (unknown type %d)\n", index, value.tag);
                             break;
                     }
                     
@@ -2456,6 +2464,7 @@ static char* handle_cmd_trendlog_data_json(uint32_t instance, int count)
                 json_array_append_new(data_array, entry);
             } else {
                 /* Échec du décodage */
+                json_object_set_new(entry, "index", json_integer(index));
                 json_object_set_new(entry, "error", json_string("Failed to decode entry"));
                 json_array_append_new(data_array, entry);
             }
@@ -2471,7 +2480,7 @@ static char* handle_cmd_trendlog_data_json(uint32_t instance, int count)
     json_object_set_new(root, "retrieved_count", json_integer(json_array_size(data_array)));
     
     /* Afficher le JSON */
- char *json_str = json_dumps(root, JSON_INDENT(2));
+    char *json_str = json_dumps(root, JSON_INDENT(2));
     json_decref(root);
     return json_str; 
 }
