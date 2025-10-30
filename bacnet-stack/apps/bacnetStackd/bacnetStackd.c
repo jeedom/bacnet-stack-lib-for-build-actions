@@ -2033,18 +2033,17 @@ static int handle_cmd_trendlogs(void)
         rpdata.application_data = apdu;
         rpdata.application_data_len = sizeof(apdu);
         
-        apdu_len = Trend_Log_Read_Property(&rpdata);
-        if (apdu_len > 0) {
-            BACNET_APPLICATION_DATA_VALUE value;
-            int len = bacapp_decode_application_data(rpdata.application_data,
-                                                    rpdata.application_data_len,
-                                                    &value);
-            if (len > 0 && value.tag == BACNET_APPLICATION_TAG_BOOLEAN) {
-                json_object_set_new(tl_obj, "enabled", json_boolean(value.type.Boolean));
-                printf("TL[%u] %s ", instance, value.type.Boolean ? "✓" : "✗");
-            }
-        }
-        
+apdu_len = Trend_Log_Read_Property(&rpdata);
+
+printf("DEBUG: Read LOG_BUFFER[%d] -> apdu_len=%d\n", index, apdu_len);
+
+if (apdu_len > 0) {
+    printf("DEBUG: First 20 bytes of APDU: ");
+    for (int j = 0; j < (apdu_len < 20 ? apdu_len : 20); j++) {
+        printf("%02X ", rpdata.application_data[j]);
+    }
+    printf("\n");
+}
         /* RECORD_COUNT */
         rpdata.object_property = PROP_RECORD_COUNT;
         rpdata.application_data = apdu;
