@@ -944,7 +944,7 @@ void TL_Local_Time_To_BAC(BACNET_DATE_TIME *bdatetime, bacnet_time_t seconds)
     struct tm *time_info;
     time_t raw_time = (time_t)seconds;
     
-    time_info = localtime(&raw_time);
+    time_info = gmtime(&raw_time);
     
     if (time_info) {
         bdatetime->date.year = time_info->tm_year + 1900;
