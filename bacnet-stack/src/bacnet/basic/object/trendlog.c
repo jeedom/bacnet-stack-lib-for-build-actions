@@ -33,6 +33,7 @@
 #define MAX_TREND_LOGS 8
 #endif
 
+
 static TL_DATA_REC Logs[MAX_TREND_LOGS][TL_MAX_ENTRIES];
 static TL_LOG_INFO LogInfo[MAX_TREND_LOGS];
 static BACNET_CHARACTER_STRING Trendlog_Names[MAX_TREND_LOGS];

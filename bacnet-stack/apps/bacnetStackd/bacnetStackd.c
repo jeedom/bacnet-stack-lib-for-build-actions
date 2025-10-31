@@ -61,7 +61,8 @@
 static void Init_Schedules(void);
 
 extern SCHEDULE_DESCR Schedule_Descr[MAX_SCHEDULES];
-
+extern TL_DATA_REC Logs[][TL_MAX_ENTRIES];
+extern TL_LOG_INFO LogInfo[];
 
 static int save_current_config(void);
 
@@ -1153,10 +1154,6 @@ for (i = 0; i < tl_count; i++) {
     BACNET_CHARACTER_STRING name_str;
     char name_buf[256];
     bool has_name;
-    BACNET_READ_PROPERTY_DATA rpdata;
-    uint8_t apdu[MAX_APDU];
-    int apdu_len;
-    BACNET_APPLICATION_DATA_VALUE value;
     
     inst = Trend_Log_Index_To_Instance(i);
     if (!Trend_Log_Valid_Instance(inst)) {
@@ -1167,162 +1164,96 @@ for (i = 0; i < tl_count; i++) {
     json_object_set_new(obj, "type", json_string("trendlog"));
     json_object_set_new(obj, "instance", json_integer(inst));
     
-    /* Nom */
+    /* ===== NOM ===== */
+    memset(name_buf, 0, sizeof(name_buf));
     has_name = Trend_Log_Object_Name(inst, &name_str);
     if (has_name) {
-        memset(name_buf, 0, sizeof(name_buf));
         characterstring_ansi_copy(name_buf, sizeof(name_buf) - 1, &name_str);
         if (name_buf[0] != '\0') {
             json_object_set_new(obj, "name", json_string(name_buf));
         }
     }
     
-    /* Description */
-    memset(&rpdata, 0, sizeof(rpdata));
-    rpdata.object_type = OBJECT_TRENDLOG;
-    rpdata.object_instance = inst;
-    rpdata.object_property = PROP_DESCRIPTION;
-    rpdata.array_index = BACNET_ARRAY_ALL;
-    rpdata.application_data = apdu;
-    rpdata.application_data_len = sizeof(apdu);
-    
-    apdu_len = Trend_Log_Read_Property(&rpdata);
-    if (apdu_len > 0) {
-        int len = bacapp_decode_application_data(rpdata.application_data,
-                                                 (uint8_t)rpdata.application_data_len,
-                                                 &value);
-        if (len > 0 && value.tag == BACNET_APPLICATION_TAG_CHARACTER_STRING) {
-            memset(name_buf, 0, sizeof(name_buf));
-            characterstring_ansi_copy(name_buf, sizeof(name_buf) - 1, &value.type.Character_String);
-            if (name_buf[0] != '\0') {
-                json_object_set_new(obj, "description", json_string(name_buf));
-            }
-        }
+    /* ===== DESCRIPTION ===== */
+    /* Utiliser le même nom pour la description par défaut */
+    if (name_buf[0] != '\0') {
+        json_object_set_new(obj, "description", json_string(name_buf));
     }
     
-    /* Enable */
-    memset(&rpdata, 0, sizeof(rpdata));
-    rpdata.object_type = OBJECT_TRENDLOG;
-    rpdata.object_instance = inst;
-    rpdata.object_property = PROP_ENABLE;
-    rpdata.array_index = BACNET_ARRAY_ALL;
-    rpdata.application_data = apdu;
-    rpdata.application_data_len = sizeof(apdu);
+    /* ===== ENABLE ===== */
+    json_object_set_new(obj, "enable", json_boolean(LogInfo[i].bEnable));
     
-    apdu_len = Trend_Log_Read_Property(&rpdata);
-    if (apdu_len > 0) {
-        int len = bacapp_decode_application_data(rpdata.application_data,
-                                                 (uint8_t)rpdata.application_data_len,
-                                                 &value);
-        if (len > 0 && value.tag == BACNET_APPLICATION_TAG_BOOLEAN) {
-            json_object_set_new(obj, "enable", json_boolean(value.type.Boolean));
-        }
+    /* ===== LOG INTERVAL (en secondes) ===== */
+    json_object_set_new(obj, "logInterval", json_integer(LogInfo[i].ulLogInterval));
+    
+    /* ===== TRIGGER TYPE (Logging Type) ===== */
+    const char *trigger_type = "periodic";
+    if (LogInfo[i].LoggingType == LOGGING_TYPE_TRIGGERED) {
+        trigger_type = "triggered";
+    } else if (LogInfo[i].LoggingType == LOGGING_TYPE_COV) {
+        trigger_type = "cov";
     }
+    json_object_set_new(obj, "triggerType", json_string(trigger_type));
     
-    /* Log Interval */
-    memset(&rpdata, 0, sizeof(rpdata));
-    rpdata.object_type = OBJECT_TRENDLOG;
-    rpdata.object_instance = inst;
-    rpdata.object_property = PROP_LOG_INTERVAL;
-    rpdata.array_index = BACNET_ARRAY_ALL;
-    rpdata.application_data = apdu;
-    rpdata.application_data_len = sizeof(apdu);
+    /* ===== BUFFER SIZE ===== */
+    json_object_set_new(obj, "bufferSize", json_integer(TL_MAX_ENTRIES));
     
-    apdu_len = Trend_Log_Read_Property(&rpdata);
-    if (apdu_len > 0) {
-        int len = bacapp_decode_application_data(rpdata.application_data,
-                                                 (uint8_t)rpdata.application_data_len,
-                                                 &value);
-        if (len > 0 && value.tag == BACNET_APPLICATION_TAG_UNSIGNED_INT) {
-            uint32_t interval_centisec = value.type.Unsigned_Int;
-            json_object_set_new(obj, "logInterval", json_integer(interval_centisec / 100));
-        }
-    }
-    
-    /* Trigger Type (Logging Type) */
-    memset(&rpdata, 0, sizeof(rpdata));
-    rpdata.object_type = OBJECT_TRENDLOG;
-    rpdata.object_instance = inst;
-    rpdata.object_property = PROP_LOGGING_TYPE;
-    rpdata.array_index = BACNET_ARRAY_ALL;
-    rpdata.application_data = apdu;
-    rpdata.application_data_len = sizeof(apdu);
-    
-    apdu_len = Trend_Log_Read_Property(&rpdata);
-    if (apdu_len > 0) {
-        int len = bacapp_decode_application_data(rpdata.application_data,
-                                                 (uint8_t)rpdata.application_data_len,
-                                                 &value);
-        if (len > 0 && value.tag == BACNET_APPLICATION_TAG_ENUMERATED) {
-            const char *trigger_type = "periodic";
-            if (value.type.Enumerated == LOGGING_TYPE_TRIGGERED) {
-                trigger_type = "triggered";
-            }
-            json_object_set_new(obj, "triggerType", json_string(trigger_type));
-        }
-    }
-    
-    /* Buffer Size */
-    memset(&rpdata, 0, sizeof(rpdata));
-    rpdata.object_type = OBJECT_TRENDLOG;
-    rpdata.object_instance = inst;
-    rpdata.object_property = PROP_BUFFER_SIZE;
-    rpdata.array_index = BACNET_ARRAY_ALL;
-    rpdata.application_data = apdu;
-    rpdata.application_data_len = sizeof(apdu);
-    
-    apdu_len = Trend_Log_Read_Property(&rpdata);
-    if (apdu_len > 0) {
-        int len = bacapp_decode_application_data(rpdata.application_data,
-                                                 (uint8_t)rpdata.application_data_len,
-                                                 &value);
-        if (len > 0 && value.tag == BACNET_APPLICATION_TAG_UNSIGNED_INT) {
-            json_object_set_new(obj, "bufferSize", json_integer(value.type.Unsigned_Int));
-        }
-    }
-    
-    /* Linked Object (Log Device Object Property) */
-    memset(&rpdata, 0, sizeof(rpdata));
-    rpdata.object_type = OBJECT_TRENDLOG;
-    rpdata.object_instance = inst;
-    rpdata.object_property = PROP_LOG_DEVICE_OBJECT_PROPERTY;
-    rpdata.array_index = BACNET_ARRAY_ALL;
-    rpdata.application_data = apdu;
-    rpdata.application_data_len = sizeof(apdu);
-    
-    apdu_len = Trend_Log_Read_Property(&rpdata);
-    if (apdu_len > 0) {
-        BACNET_DEVICE_OBJECT_PROPERTY_REFERENCE source;
-        int len = bacapp_decode_device_obj_property_ref(rpdata.application_data, &source);
+    /* ===== LINKED OBJECT ===== */
+    if (LogInfo[i].Source.objectIdentifier.type != MAX_BACNET_OBJECT_TYPE) {
+        json_t *linked_obj = json_object();
+        const char *obj_type_str = NULL;
         
-        if (len > 0) {
-            json_t *linked_obj = json_object();
-            const char *obj_type_str = bactext_object_type_name(source.objectIdentifier.type);
-            
-            /* Convertir en format JSON attendu */
-            if (strcmp(obj_type_str, "analog-input") == 0) {
-                json_object_set_new(linked_obj, "type", json_string("analog-input"));
-            } else if (strcmp(obj_type_str, "analog-output") == 0) {
-                json_object_set_new(linked_obj, "type", json_string("analog-output"));
-            } else if (strcmp(obj_type_str, "analog-value") == 0) {
-                json_object_set_new(linked_obj, "type", json_string("analog-value"));
-            } else if (strcmp(obj_type_str, "binary-input") == 0) {
-                json_object_set_new(linked_obj, "type", json_string("binary-input"));
-            } else if (strcmp(obj_type_str, "binary-output") == 0) {
-                json_object_set_new(linked_obj, "type", json_string("binary-output"));
-            } else if (strcmp(obj_type_str, "binary-value") == 0) {
-                json_object_set_new(linked_obj, "type", json_string("binary-value"));
-            } else {
-                json_object_set_new(linked_obj, "type", json_string(obj_type_str));
-            }
-            
-            json_object_set_new(linked_obj, "instance", json_integer(source.objectIdentifier.instance));
+        /* Convertir le type d'objet en string */
+        switch (LogInfo[i].Source.objectIdentifier.type) {
+            case OBJECT_ANALOG_INPUT:
+                obj_type_str = "analog-input";
+                break;
+            case OBJECT_ANALOG_OUTPUT:
+                obj_type_str = "analog-output";
+                break;
+            case OBJECT_ANALOG_VALUE:
+                obj_type_str = "analog-value";
+                break;
+            case OBJECT_BINARY_INPUT:
+                obj_type_str = "binary-input";
+                break;
+            case OBJECT_BINARY_OUTPUT:
+                obj_type_str = "binary-output";
+                break;
+            case OBJECT_BINARY_VALUE:
+                obj_type_str = "binary-value";
+                break;
+            case OBJECT_MULTI_STATE_INPUT:
+                obj_type_str = "multi-state-input";
+                break;
+            case OBJECT_MULTI_STATE_OUTPUT:
+                obj_type_str = "multi-state-output";
+                break;
+            case OBJECT_MULTI_STATE_VALUE:
+                obj_type_str = "multi-state-value";
+                break;
+            default:
+                obj_type_str = bactext_object_type_name(LogInfo[i].Source.objectIdentifier.type);
+                break;
+        }
+        
+        if (obj_type_str) {
+            json_object_set_new(linked_obj, "type", json_string(obj_type_str));
+            json_object_set_new(linked_obj, "instance", 
+                               json_integer(LogInfo[i].Source.objectIdentifier.instance));
             json_object_set_new(obj, "linkedObject", linked_obj);
         }
     }
     
     json_array_append_new(objects_array, obj);
+    
+    /* Progress indicator */
+    if ((i + 1) % 10 == 0) {
+        printf("  Saved %u/%u Trend Logs\n", i + 1, tl_count);
+    }
 }
+
+printf("✓ All %u Trend Logs saved\n", tl_count);
 
 json_object_set_new(root, "objects", objects_array);
 
