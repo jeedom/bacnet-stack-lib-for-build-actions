@@ -1870,3 +1870,15 @@ bool Trend_Log_Configure_Direct(
     
     return true;
 }
+/**
+ * @brief Get pointer to internal LogInfo structure (for config save)
+ * @param index - Index of the log (0 to MAX_TREND_LOGS-1)
+ * @return Pointer to TL_LOG_INFO structure or NULL if invalid
+ */
+TL_LOG_INFO *Trend_Log_Get_Info(unsigned int index)
+{
+    if (index < MAX_TREND_LOGS) {
+        return &LogInfo[index];
+    }
+    return NULL;
+}

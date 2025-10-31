@@ -1149,11 +1149,16 @@ for (i = 0; i < sch_count; i++) {
 /* ⭐ AJOUT : Trend Logs */
 unsigned int tl_count = Trend_Log_Count();
 for (i = 0; i < tl_count; i++) {
+    TL_LOG_INFO *log_info = Trend_Log_Get_Info(i);
     uint32_t inst;
     json_t *obj;
     BACNET_CHARACTER_STRING name_str;
     char name_buf[256];
     bool has_name;
+    
+    if (!log_info) {
+        continue;
+    }
     
     inst = Trend_Log_Index_To_Instance(i);
     if (!Trend_Log_Valid_Instance(inst)) {
@@ -1175,22 +1180,21 @@ for (i = 0; i < tl_count; i++) {
     }
     
     /* ===== DESCRIPTION ===== */
-    /* Utiliser le même nom pour la description par défaut */
     if (name_buf[0] != '\0') {
         json_object_set_new(obj, "description", json_string(name_buf));
     }
     
     /* ===== ENABLE ===== */
-    json_object_set_new(obj, "enable", json_boolean(LogInfo[i].bEnable));
+    json_object_set_new(obj, "enable", json_boolean(log_info->bEnable));
     
     /* ===== LOG INTERVAL (en secondes) ===== */
-    json_object_set_new(obj, "logInterval", json_integer(LogInfo[i].ulLogInterval));
+    json_object_set_new(obj, "logInterval", json_integer(log_info->ulLogInterval));
     
     /* ===== TRIGGER TYPE (Logging Type) ===== */
     const char *trigger_type = "periodic";
-    if (LogInfo[i].LoggingType == LOGGING_TYPE_TRIGGERED) {
+    if (log_info->LoggingType == LOGGING_TYPE_TRIGGERED) {
         trigger_type = "triggered";
-    } else if (LogInfo[i].LoggingType == LOGGING_TYPE_COV) {
+    } else if (log_info->LoggingType == LOGGING_TYPE_COV) {
         trigger_type = "cov";
     }
     json_object_set_new(obj, "triggerType", json_string(trigger_type));
@@ -1199,12 +1203,12 @@ for (i = 0; i < tl_count; i++) {
     json_object_set_new(obj, "bufferSize", json_integer(TL_MAX_ENTRIES));
     
     /* ===== LINKED OBJECT ===== */
-    if (LogInfo[i].Source.objectIdentifier.type != MAX_BACNET_OBJECT_TYPE) {
+    if (log_info->Source.objectIdentifier.type != MAX_BACNET_OBJECT_TYPE) {
         json_t *linked_obj = json_object();
         const char *obj_type_str = NULL;
         
         /* Convertir le type d'objet en string */
-        switch (LogInfo[i].Source.objectIdentifier.type) {
+        switch (log_info->Source.objectIdentifier.type) {
             case OBJECT_ANALOG_INPUT:
                 obj_type_str = "analog-input";
                 break;
@@ -1233,14 +1237,14 @@ for (i = 0; i < tl_count; i++) {
                 obj_type_str = "multi-state-value";
                 break;
             default:
-                obj_type_str = bactext_object_type_name(LogInfo[i].Source.objectIdentifier.type);
+                obj_type_str = bactext_object_type_name(log_info->Source.objectIdentifier.type);
                 break;
         }
         
         if (obj_type_str) {
             json_object_set_new(linked_obj, "type", json_string(obj_type_str));
             json_object_set_new(linked_obj, "instance", 
-                               json_integer(LogInfo[i].Source.objectIdentifier.instance));
+                               json_integer(log_info->Source.objectIdentifier.instance));
             json_object_set_new(obj, "linkedObject", linked_obj);
         }
     }
