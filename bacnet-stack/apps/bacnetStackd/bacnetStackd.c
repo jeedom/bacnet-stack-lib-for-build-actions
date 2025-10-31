@@ -1145,10 +1145,187 @@ for (i = 0; i < sch_count; i++) {
     json_array_append_new(objects_array, obj);
 }
 
+/* ⭐ AJOUT : Trend Logs */
+unsigned int tl_count = Trend_Log_Count();
+for (i = 0; i < tl_count; i++) {
+    uint32_t inst;
+    json_t *obj;
+    BACNET_CHARACTER_STRING name_str;
+    char name_buf[256];
+    bool has_name;
+    BACNET_READ_PROPERTY_DATA rpdata;
+    uint8_t apdu[MAX_APDU];
+    int apdu_len;
+    BACNET_APPLICATION_DATA_VALUE value;
+    
+    inst = Trend_Log_Index_To_Instance(i);
+    if (!Trend_Log_Valid_Instance(inst)) {
+        continue;
+    }
+    
+    obj = json_object();
+    json_object_set_new(obj, "type", json_string("trendlog"));
+    json_object_set_new(obj, "instance", json_integer(inst));
+    
+    /* Nom */
+    has_name = Trend_Log_Object_Name(inst, &name_str);
+    if (has_name) {
+        memset(name_buf, 0, sizeof(name_buf));
+        characterstring_ansi_copy(name_buf, sizeof(name_buf) - 1, &name_str);
+        if (name_buf[0] != '\0') {
+            json_object_set_new(obj, "name", json_string(name_buf));
+        }
+    }
+    
+    /* Description */
+    memset(&rpdata, 0, sizeof(rpdata));
+    rpdata.object_type = OBJECT_TRENDLOG;
+    rpdata.object_instance = inst;
+    rpdata.object_property = PROP_DESCRIPTION;
+    rpdata.array_index = BACNET_ARRAY_ALL;
+    rpdata.application_data = apdu;
+    rpdata.application_data_len = sizeof(apdu);
+    
+    apdu_len = Trend_Log_Read_Property(&rpdata);
+    if (apdu_len > 0) {
+        int len = bacapp_decode_application_data(rpdata.application_data,
+                                                 (uint8_t)rpdata.application_data_len,
+                                                 &value);
+        if (len > 0 && value.tag == BACNET_APPLICATION_TAG_CHARACTER_STRING) {
+            memset(name_buf, 0, sizeof(name_buf));
+            characterstring_ansi_copy(name_buf, sizeof(name_buf) - 1, &value.type.Character_String);
+            if (name_buf[0] != '\0') {
+                json_object_set_new(obj, "description", json_string(name_buf));
+            }
+        }
+    }
+    
+    /* Enable */
+    memset(&rpdata, 0, sizeof(rpdata));
+    rpdata.object_type = OBJECT_TRENDLOG;
+    rpdata.object_instance = inst;
+    rpdata.object_property = PROP_ENABLE;
+    rpdata.array_index = BACNET_ARRAY_ALL;
+    rpdata.application_data = apdu;
+    rpdata.application_data_len = sizeof(apdu);
+    
+    apdu_len = Trend_Log_Read_Property(&rpdata);
+    if (apdu_len > 0) {
+        int len = bacapp_decode_application_data(rpdata.application_data,
+                                                 (uint8_t)rpdata.application_data_len,
+                                                 &value);
+        if (len > 0 && value.tag == BACNET_APPLICATION_TAG_BOOLEAN) {
+            json_object_set_new(obj, "enable", json_boolean(value.type.Boolean));
+        }
+    }
+    
+    /* Log Interval */
+    memset(&rpdata, 0, sizeof(rpdata));
+    rpdata.object_type = OBJECT_TRENDLOG;
+    rpdata.object_instance = inst;
+    rpdata.object_property = PROP_LOG_INTERVAL;
+    rpdata.array_index = BACNET_ARRAY_ALL;
+    rpdata.application_data = apdu;
+    rpdata.application_data_len = sizeof(apdu);
+    
+    apdu_len = Trend_Log_Read_Property(&rpdata);
+    if (apdu_len > 0) {
+        int len = bacapp_decode_application_data(rpdata.application_data,
+                                                 (uint8_t)rpdata.application_data_len,
+                                                 &value);
+        if (len > 0 && value.tag == BACNET_APPLICATION_TAG_UNSIGNED_INT) {
+            uint32_t interval_centisec = value.type.Unsigned_Int;
+            json_object_set_new(obj, "logInterval", json_integer(interval_centisec / 100));
+        }
+    }
+    
+    /* Trigger Type (Logging Type) */
+    memset(&rpdata, 0, sizeof(rpdata));
+    rpdata.object_type = OBJECT_TRENDLOG;
+    rpdata.object_instance = inst;
+    rpdata.object_property = PROP_LOGGING_TYPE;
+    rpdata.array_index = BACNET_ARRAY_ALL;
+    rpdata.application_data = apdu;
+    rpdata.application_data_len = sizeof(apdu);
+    
+    apdu_len = Trend_Log_Read_Property(&rpdata);
+    if (apdu_len > 0) {
+        int len = bacapp_decode_application_data(rpdata.application_data,
+                                                 (uint8_t)rpdata.application_data_len,
+                                                 &value);
+        if (len > 0 && value.tag == BACNET_APPLICATION_TAG_ENUMERATED) {
+            const char *trigger_type = "periodic";
+            if (value.type.Enumerated == LOGGING_TYPE_TRIGGERED) {
+                trigger_type = "triggered";
+            }
+            json_object_set_new(obj, "triggerType", json_string(trigger_type));
+        }
+    }
+    
+    /* Buffer Size */
+    memset(&rpdata, 0, sizeof(rpdata));
+    rpdata.object_type = OBJECT_TRENDLOG;
+    rpdata.object_instance = inst;
+    rpdata.object_property = PROP_BUFFER_SIZE;
+    rpdata.array_index = BACNET_ARRAY_ALL;
+    rpdata.application_data = apdu;
+    rpdata.application_data_len = sizeof(apdu);
+    
+    apdu_len = Trend_Log_Read_Property(&rpdata);
+    if (apdu_len > 0) {
+        int len = bacapp_decode_application_data(rpdata.application_data,
+                                                 (uint8_t)rpdata.application_data_len,
+                                                 &value);
+        if (len > 0 && value.tag == BACNET_APPLICATION_TAG_UNSIGNED_INT) {
+            json_object_set_new(obj, "bufferSize", json_integer(value.type.Unsigned_Int));
+        }
+    }
+    
+    /* Linked Object (Log Device Object Property) */
+    memset(&rpdata, 0, sizeof(rpdata));
+    rpdata.object_type = OBJECT_TRENDLOG;
+    rpdata.object_instance = inst;
+    rpdata.object_property = PROP_LOG_DEVICE_OBJECT_PROPERTY;
+    rpdata.array_index = BACNET_ARRAY_ALL;
+    rpdata.application_data = apdu;
+    rpdata.application_data_len = sizeof(apdu);
+    
+    apdu_len = Trend_Log_Read_Property(&rpdata);
+    if (apdu_len > 0) {
+        BACNET_DEVICE_OBJECT_PROPERTY_REFERENCE source;
+        int len = bacapp_decode_device_obj_property_ref(rpdata.application_data, &source);
+        
+        if (len > 0) {
+            json_t *linked_obj = json_object();
+            const char *obj_type_str = bactext_object_type_name(source.objectIdentifier.type);
+            
+            /* Convertir en format JSON attendu */
+            if (strcmp(obj_type_str, "analog-input") == 0) {
+                json_object_set_new(linked_obj, "type", json_string("analog-input"));
+            } else if (strcmp(obj_type_str, "analog-output") == 0) {
+                json_object_set_new(linked_obj, "type", json_string("analog-output"));
+            } else if (strcmp(obj_type_str, "analog-value") == 0) {
+                json_object_set_new(linked_obj, "type", json_string("analog-value"));
+            } else if (strcmp(obj_type_str, "binary-input") == 0) {
+                json_object_set_new(linked_obj, "type", json_string("binary-input"));
+            } else if (strcmp(obj_type_str, "binary-output") == 0) {
+                json_object_set_new(linked_obj, "type", json_string("binary-output"));
+            } else if (strcmp(obj_type_str, "binary-value") == 0) {
+                json_object_set_new(linked_obj, "type", json_string("binary-value"));
+            } else {
+                json_object_set_new(linked_obj, "type", json_string(obj_type_str));
+            }
+            
+            json_object_set_new(linked_obj, "instance", json_integer(source.objectIdentifier.instance));
+            json_object_set_new(obj, "linkedObject", linked_obj);
+        }
+    }
+    
+    json_array_append_new(objects_array, obj);
+}
 
-    
-    json_object_set_new(root, "objects", objects_array);
-    
+json_object_set_new(root, "objects", objects_array);
+
     /* Écrire dans le fichier */
     if (json_dump_file(root, g_config_file, JSON_INDENT(2)) != 0) {
         fprintf(stderr, "Failed to write config to %s\n", g_config_file);
