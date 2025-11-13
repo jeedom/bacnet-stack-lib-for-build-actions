@@ -1940,7 +1940,8 @@ static int apply_config_from_json(const char *json_text)
     printf("  SCH: %u, TL: %u\n", Schedule_Count(), Trend_Log_Count()); 
     fflush(stdout);
     
-    save_current_config();
+    /* Sauvegarde désactivée : utiliser la commande SAVE_CONFIG pour sauvegarder */
+    /* save_current_config(); */
     
     Send_I_Am(&Rx_Buf[0]);
     printf("I-Am re-broadcasted after object creation\n");
