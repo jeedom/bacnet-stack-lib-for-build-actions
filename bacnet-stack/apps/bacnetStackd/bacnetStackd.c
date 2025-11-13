@@ -65,6 +65,7 @@ extern TL_DATA_REC Logs[][TL_MAX_ENTRIES];
 extern TL_LOG_INFO LogInfo[];
 
 static int save_current_config(void);
+static int save_config_to_file(const char *filepath);
 
 static void Schedule_Init_Empty(void)
 {
@@ -134,7 +135,7 @@ static void print_timestamp_log(const char *message)
     fflush(stdout);
 }
 
-/* Handler personnalisé pour WriteProperty : sauvegarde après chaque écriture */
+/* Handler personnalisé pour WriteProperty (pas de sauvegarde auto) */
 void my_handler_write_property(
     uint8_t *service_request,
     uint16_t service_len,
@@ -142,7 +143,8 @@ void my_handler_write_property(
     BACNET_CONFIRMED_SERVICE_DATA *service_data)
 {
     handler_write_property(service_request, service_len, src, service_data);
-    save_current_config();
+    /* Sauvegarde désactivée : utiliser la commande SAVE_CONFIG pour sauvegarder */
+    /* save_current_config(); */
 }
 
 /* Buffers */
@@ -679,8 +681,8 @@ static void Init_Schedules(void)
 
 /* ===== Fonctions JSON ===== */
 
-/* Sauvegarder la configuration actuelle dans un fichier JSON */
-static int save_current_config(void)
+/* Sauvegarder la configuration actuelle dans un fichier JSON spécifique */
+static int save_config_to_file(const char *filepath)
 {
     json_t *root;
     json_t *objects_array;
@@ -688,10 +690,13 @@ static int save_current_config(void)
     unsigned int msi_count, mso_count, msv_count, sch_count;
     unsigned int i;
     
-    if (!g_config_file[0]) {
-        return 0;
+    if (!filepath || !filepath[0]) {
+        fprintf(stderr, "ERROR: No filepath provided for save\n");
+        return -1;
     }
 
+    printf("Saving configuration to: %s\n", filepath);
+    
     root = json_object();
     objects_array = json_array();
     
@@ -1146,130 +1151,34 @@ for (i = 0; i < sch_count; i++) {
     json_array_append_new(objects_array, obj);
 }
 
-/* ⭐ AJOUT : Trend Logs */
-unsigned int tl_count = Trend_Log_Count();
-for (i = 0; i < tl_count; i++) {
-    TL_LOG_INFO *log_info = Trend_Log_Get_Info(i);
-    uint32_t inst;
-    json_t *obj;
-    BACNET_CHARACTER_STRING name_str;
-    char name_buf[256];
-    bool has_name;
-    
-    if (!log_info) {
-        continue;
-    }
-    
-    inst = Trend_Log_Index_To_Instance(i);
-    if (!Trend_Log_Valid_Instance(inst)) {
-        continue;
-    }
-    
-    obj = json_object();
-    json_object_set_new(obj, "type", json_string("trendlog"));
-    json_object_set_new(obj, "instance", json_integer(inst));
-    
-    /* ===== NOM ===== */
-    memset(name_buf, 0, sizeof(name_buf));
-    has_name = Trend_Log_Object_Name(inst, &name_str);
-    if (has_name) {
-        characterstring_ansi_copy(name_buf, sizeof(name_buf) - 1, &name_str);
-        if (name_buf[0] != '\0') {
-            json_object_set_new(obj, "name", json_string(name_buf));
-        }
-    }
-    
-    /* ===== DESCRIPTION ===== */
-    if (name_buf[0] != '\0') {
-        json_object_set_new(obj, "description", json_string(name_buf));
-    }
-    
-    /* ===== ENABLE ===== */
-    json_object_set_new(obj, "enable", json_boolean(log_info->bEnable));
-    
-    /* ===== LOG INTERVAL (en secondes) ===== */
-    json_object_set_new(obj, "logInterval", json_integer(log_info->ulLogInterval));
-    
-    /* ===== TRIGGER TYPE (Logging Type) ===== */
-    const char *trigger_type = "periodic";
-    if (log_info->LoggingType == LOGGING_TYPE_TRIGGERED) {
-        trigger_type = "triggered";
-    } else if (log_info->LoggingType == LOGGING_TYPE_COV) {
-        trigger_type = "cov";
-    }
-    json_object_set_new(obj, "triggerType", json_string(trigger_type));
-    
-    /* ===== BUFFER SIZE ===== */
-    json_object_set_new(obj, "bufferSize", json_integer(TL_MAX_ENTRIES));
-    
-    /* ===== LINKED OBJECT ===== */
-    if (log_info->Source.objectIdentifier.type != MAX_BACNET_OBJECT_TYPE) {
-        json_t *linked_obj = json_object();
-        const char *obj_type_str = NULL;
-        
-        /* Convertir le type d'objet en string */
-        switch (log_info->Source.objectIdentifier.type) {
-            case OBJECT_ANALOG_INPUT:
-                obj_type_str = "analog-input";
-                break;
-            case OBJECT_ANALOG_OUTPUT:
-                obj_type_str = "analog-output";
-                break;
-            case OBJECT_ANALOG_VALUE:
-                obj_type_str = "analog-value";
-                break;
-            case OBJECT_BINARY_INPUT:
-                obj_type_str = "binary-input";
-                break;
-            case OBJECT_BINARY_OUTPUT:
-                obj_type_str = "binary-output";
-                break;
-            case OBJECT_BINARY_VALUE:
-                obj_type_str = "binary-value";
-                break;
-            case OBJECT_MULTI_STATE_INPUT:
-                obj_type_str = "multi-state-input";
-                break;
-            case OBJECT_MULTI_STATE_OUTPUT:
-                obj_type_str = "multi-state-output";
-                break;
-            case OBJECT_MULTI_STATE_VALUE:
-                obj_type_str = "multi-state-value";
-                break;
-            default:
-                obj_type_str = bactext_object_type_name(log_info->Source.objectIdentifier.type);
-                break;
-        }
-        
-        if (obj_type_str) {
-            json_object_set_new(linked_obj, "type", json_string(obj_type_str));
-            json_object_set_new(linked_obj, "instance", 
-                               json_integer(log_info->Source.objectIdentifier.instance));
-            json_object_set_new(obj, "linkedObject", linked_obj);
-        }
-    }
-    
-    json_array_append_new(objects_array, obj);
-    
-    /* Progress indicator */
-    if ((i + 1) % 10 == 0) {
-        printf("  Saved %u/%u Trend Logs\n", i + 1, tl_count);
-    }
-}
-
-printf("✓ All %u Trend Logs saved\n", tl_count);
+/* ⭐ TRENDLOGS EXCLUS DE LA SAUVEGARDE AUTOMATIQUE ⭐ 
+ * Les trendlogs ne sont PAS sauvegardés dans le fichier de configuration 
+ * pour éviter de surcharger le système lors des sauvegardes périodiques.
+ * Ils sont uniquement chargés depuis le JSON initial et configurés en mémoire.
+ */
+printf("Note: Trendlogs are excluded from automatic save (configured via JSON only)\n");
 
 json_object_set_new(root, "objects", objects_array);
 
     /* Écrire dans le fichier */
-    if (json_dump_file(root, g_config_file, JSON_INDENT(2)) != 0) {
-        fprintf(stderr, "Failed to write config to %s\n", g_config_file);
+    if (json_dump_file(root, filepath, JSON_INDENT(2)) != 0) {
+        fprintf(stderr, "Failed to write config to %s\n", filepath);
         json_decref(root);
         return -1;
     }
     
+    printf("Configuration saved successfully to: %s\n", filepath);
     json_decref(root);
     return 0;
+}
+
+/* Sauvegarder dans le fichier de configuration par défaut */
+static int save_current_config(void)
+{
+    if (!g_config_file[0]) {
+        return 0;
+    }
+    return save_config_to_file(g_config_file);
 }
 
 /* Charger la configuration depuis le fichier */
@@ -1450,6 +1359,7 @@ static int apply_config_from_json(const char *json_text)
             if (json_is_number(jpv)) {
                 Analog_Value_Present_Value_Set(inst, (float)json_number_value(jpv), BACNET_MAX_PRIORITY);
             }
+            Analog_Value_Out_Of_Service_Set(inst, true);
         } 
         else if (strcmp(typ, "analog-output") == 0) {
             bool exists = Analog_Output_Valid_Instance(inst);
@@ -1545,6 +1455,7 @@ static int apply_config_from_json(const char *json_text)
             if (json_is_integer(jpv)) {
                 Binary_Value_Present_Value_Set(inst, (BACNET_BINARY_PV)json_integer_value(jpv));
             }
+            Binary_Value_Out_Of_Service_Set(inst, true);
         }
         else if (strcmp(typ, "multi-state-input") == 0) {
             bool exists = Multistate_Input_Valid_Instance(inst);
@@ -1616,6 +1527,7 @@ static int apply_config_from_json(const char *json_text)
             if (json_is_integer(jpv)) {
                 Multistate_Value_Present_Value_Set(inst, (uint32_t)json_integer_value(jpv));
             }
+            Multistate_Value_Out_Of_Service_Set(inst, true);
         }
         else if (strcmp(typ, "schedule") == 0) {
             bool exists;
@@ -2763,6 +2675,46 @@ static int handle_socket_line(const char *line)
         else         (void)write(g_client_fd, "ERR\n", 4);
         return 0;
     }
+    if (strncmp(line, "SAVE_CONFIG", 11) == 0) {
+        const char *filepath = NULL;
+        char response[256];
+        int rc;
+        
+        /* Vérifier si un chemin de fichier est spécifié */
+        if (strlen(line) > 11 && line[11] == ' ') {
+            filepath = line + 12;
+            while (*filepath == ' ') filepath++;
+            
+            /* Si le chemin est vide ou juste des espaces, utiliser le fichier par défaut */
+            if (*filepath == '\0') {
+                filepath = NULL;
+            }
+        }
+        
+        /* Sauvegarder */
+        if (filepath && *filepath) {
+            rc = save_config_to_file(filepath);
+            if (rc == 0) {
+                snprintf(response, sizeof(response), "OK saved to %s\n", filepath);
+                (void)write(g_client_fd, response, strlen(response));
+            } else {
+                snprintf(response, sizeof(response), "ERR failed to save to %s\n", filepath);
+                (void)write(g_client_fd, response, strlen(response));
+            }
+        } else if (g_config_file[0]) {
+            rc = save_current_config();
+            if (rc == 0) {
+                snprintf(response, sizeof(response), "OK saved to %s\n", g_config_file);
+                (void)write(g_client_fd, response, strlen(response));
+            } else {
+                snprintf(response, sizeof(response), "ERR failed to save to %s\n", g_config_file);
+                (void)write(g_client_fd, response, strlen(response));
+            }
+        } else {
+            (void)write(g_client_fd, "ERR no config file specified\n", 29);
+        }
+        return 0;
+    }
     if (strncmp(line, "STATUS", 6) == 0) {
         char buf[1024];
         snprintf(buf, sizeof(buf),
@@ -2920,7 +2872,8 @@ static void Init_Service_Handlers(void)
     mstimer_set(&Schedule_PV_Timer, 60UL * 1000UL);
     mstimer_set(&BACNET_TSM_Timer, 50UL);
     mstimer_set(&BACNET_Address_Timer, 60UL * 1000UL);
-    mstimer_set(&Config_Save_Timer, 30UL * 1000UL);
+    /* Config_Save_Timer désactivé : sauvegarde sur demande uniquement via SAVE_CONFIG */
+    /* mstimer_set(&Config_Save_Timer, 30UL * 1000UL); */
 }
 
 /* ===== CLI ===== */
@@ -3050,12 +3003,15 @@ int main(int argc, char *argv[])
             mstimer_reset(&BACNET_Address_Timer);
             address_cache_timer(mstimer_interval(&BACNET_Address_Timer));
         }
+        /* Sauvegarde automatique désactivée - utiliser la commande SAVE_CONFIG */
+        /*
         if (mstimer_expired(&Config_Save_Timer)) {
             mstimer_reset(&Config_Save_Timer);
             if (g_config_file[0]) {
                 save_current_config();
             }
         }
+        */
         if (mstimer_expired(&Schedule_PV_Timer)) {
             BACNET_TIME time_of_day;
             BACNET_WEEKDAY wday;
