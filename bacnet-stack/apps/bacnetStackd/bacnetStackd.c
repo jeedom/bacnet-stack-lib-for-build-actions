@@ -1596,6 +1596,13 @@ static int apply_config_from_json(const char *json_text)
                 apdu_len = Schedule_Write_Property(&wp_data);
                 if (apdu_len > 0 && wp_data.error_code == ERROR_CODE_SUCCESS) {
                     printf("  Default value set successfully\n");
+                    
+
+                    SCHEDULE_DESCR *desc = Schedule_Object(inst);
+                    if (desc) {
+                        memcpy(&desc->Present_Value, &app_value, sizeof(BACNET_APPLICATION_DATA_VALUE));
+                        printf("  Present_Value initialized with defaultValue\n");
+                    }
                 } else {
                     printf("  Failed to set default value (error: %d)\n", wp_data.error_code);
                 }
@@ -1695,6 +1702,8 @@ static int apply_config_from_json(const char *json_text)
                         }
                     }
                 }
+            } else {
+                printf("  No weeklySchedule configured (will use defaultValue)\n");
             }
             
             printf("  Schedule %u configuration complete\n", inst);
@@ -1748,6 +1757,13 @@ static int apply_config_from_json(const char *json_text)
                         } else if (desc->Present_Value.tag == BACNET_APPLICATION_TAG_REAL) {
                             printf("  Initial PV: %.1f (REAL) at %02u:%02u wday=%u\n",
                                 desc->Present_Value.type.Real,
+                                time_of_day.hour, time_of_day.min, wday);
+                        } else if (desc->Present_Value.tag == BACNET_APPLICATION_TAG_NULL) {
+                            printf("  WARNING: Initial PV is NULL at %02u:%02u wday=%u\n",
+                                time_of_day.hour, time_of_day.min, wday);
+                        } else {
+                            printf("  Initial PV: unknown tag %u at %02u:%02u wday=%u\n",
+                                desc->Present_Value.tag,
                                 time_of_day.hour, time_of_day.min, wday);
                         }
                     }
