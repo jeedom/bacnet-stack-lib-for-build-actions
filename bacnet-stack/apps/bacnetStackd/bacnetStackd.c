@@ -192,6 +192,9 @@ static bool set_object_name(BACNET_OBJECT_TYPE obj_type, uint32_t instance, cons
         case OBJECT_MULTI_STATE_VALUE:
             status = Multistate_Value_Name_Set(instance, name);
             break;
+        case OBJECT_SCHEDULE:
+            status = Schedule_Name_Set(instance, name);
+            break;
         default:
             break;
     }
@@ -989,20 +992,36 @@ for (i = 0; i < sch_count; i++) {
     BACNET_READ_PROPERTY_DATA rpdata;
     uint8_t apdu[MAX_APDU];
     int apdu_len;
+    bool is_configured = false;
     
     inst = Schedule_Index_To_Instance(i);
+    
+
+    has_name = Schedule_Object_Name(inst, &name_str);
+    if (has_name) {
+        memset(name_buf, 0, sizeof(name_buf));
+        characterstring_ansi_copy(name_buf, sizeof(name_buf) - 1, &name_str);
+        
+
+        char default_name[32];
+        snprintf(default_name, sizeof(default_name), "SCHEDULE %u", inst);
+        if (name_buf[0] != '\0' && strcmp(name_buf, default_name) != 0) {
+            is_configured = true;
+        }
+    }
+    
+
+    if (!is_configured) {
+        continue;
+    }
+    
     obj = json_object();
     json_object_set_new(obj, "type", json_string("schedule"));
     json_object_set_new(obj, "instance", json_integer(inst));
     
     /* Nom */
-    has_name = Schedule_Object_Name(inst, &name_str);
-    if (has_name) {
-        memset(name_buf, 0, sizeof(name_buf));
-        characterstring_ansi_copy(name_buf, sizeof(name_buf) - 1, &name_str);
-        if (name_buf[0] != '\0') {
-            json_object_set_new(obj, "name", json_string(name_buf));
-        }
+    if (name_buf[0] != '\0') {
+        json_object_set_new(obj, "name", json_string(name_buf));
     }
     
     /* ======== MODIFICATION: Default Value avec support BOOLEAN ======== */
@@ -1649,8 +1668,14 @@ static int apply_config_from_json(const char *json_text)
             /* Configuration du weekly schedule */
             weekly_schedule = json_object_get(it, "weeklySchedule");
             if (json_is_array(weekly_schedule)) {
-                printf("  Configuring weekly schedule...\n");
-                for (day_idx = 0; day_idx < json_array_size(weekly_schedule) && day_idx < 7; day_idx++) {
+                size_t num_days = json_array_size(weekly_schedule);
+                printf("  Configuring weekly schedule (%zu days provided)...\n", num_days);
+                
+                if (num_days < 7) {
+                    printf("  WARNING: Only %zu day(s) provided, expecting 7 days!\n", num_days);
+                }
+                
+                for (day_idx = 0; day_idx < num_days && day_idx < 7; day_idx++) {
                     json_t *day_schedule = json_array_get(weekly_schedule, day_idx);
                     if (json_is_array(day_schedule)) {
                         BACNET_DAILY_SCHEDULE daily;
