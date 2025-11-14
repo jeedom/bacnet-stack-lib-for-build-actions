@@ -33,23 +33,14 @@ static int safe_read_property_for_trendlog(
 {
     int len = 0;
     BACNET_READ_PROPERTY_DATA rpdata;
-    
-
-    printf("[TL_OVERRIDE] Reading property from OBJECT_TYPE_%d[%u].PROPERTY_%u\n",
-           Source->objectIdentifier.type,
-           Source->objectIdentifier.instance,
-           Source->propertyIdentifier);
-    fflush(stdout);
 
     if (value == NULL) {
-        printf("[TL_OVERRIDE] ERROR: value buffer is NULL\n");
-        fflush(stdout);
         *error_class = ERROR_CLASS_SERVICES;
         *error_code = ERROR_CODE_OTHER;
         return -1;
     }
 
-    /* Vérification que l'objet source existe vraiment */
+    /* Verify source object exists */
     bool object_exists = false;
     switch (Source->objectIdentifier.type) {
         case OBJECT_ANALOG_INPUT:
@@ -71,22 +62,18 @@ static int safe_read_property_for_trendlog(
             object_exists = Binary_Value_Valid_Instance(Source->objectIdentifier.instance);
             break;
         default:
-            printf("[TL_OVERRIDE] ERROR: Unsupported object type %d\n", 
-                   Source->objectIdentifier.type);
-            fflush(stdout);
             object_exists = false;
             break;
     }
     
+    
     if (!object_exists) {
-        printf("[TL_OVERRIDE] ERROR: Source object does not exist!\n");
-        fflush(stdout);
         *error_class = ERROR_CLASS_OBJECT;
         *error_code = ERROR_CODE_UNKNOWN_OBJECT;
         return -1;
     }
-
-    /* Configure la structure de lecture */
+    
+    /* Setup read property structure */
     memset(&rpdata, 0, sizeof(rpdata));
     rpdata.application_data = value;
     rpdata.application_data_len = MAX_APDU;
@@ -95,28 +82,17 @@ static int safe_read_property_for_trendlog(
     rpdata.object_property = Source->propertyIdentifier;
     rpdata.array_index = Source->arrayIndex;
     
-    printf("[TL_OVERRIDE] Calling Device_Read_Property()...\n");
-    fflush(stdout);
-    
-    /* Lecture de la propriété */
+    /* Read property */
     len = Device_Read_Property(&rpdata);
     
-    printf("[TL_OVERRIDE] Device_Read_Property() returned len=%d\n", len);
-    fflush(stdout);
-    
     if (len < 0) {
-        printf("[TL_OVERRIDE] ERROR: Device_Read_Property failed, error_class=%d, error_code=%d\n",
-               rpdata.error_class, rpdata.error_code);
-        fflush(stdout);
         *error_class = rpdata.error_class;
         *error_code = rpdata.error_code;
         return -1;
     }
     
-    printf("[TL_OVERRIDE] Successfully read %d bytes\n", len);
-    fflush(stdout);
-    
     return len;
+}
 }
 
 /**
@@ -203,56 +179,18 @@ bool Trendlog_Test_Source_Read(uint32_t instance)
     TL_LOG_INFO *log_info;
     int len;
     
-    printf("\n[TL_OVERRIDE] ========================================\n");
-    printf("[TL_OVERRIDE] Testing source read for Trendlog %u\n", instance);
-    printf("[TL_OVERRIDE] ========================================\n");
-    fflush(stdout);
-    
     if (!Trend_Log_Valid_Instance(instance)) {
-        printf("[TL_OVERRIDE] ERROR: Invalid trendlog instance\n");
-        fflush(stdout);
+        printf("✗ Trendlog %u: Invalid instance\n", instance);
         return false;
     }
-    printf("[TL_OVERRIDE] Instance %u is valid\n", instance);
-    fflush(stdout);
-    
-    printf("[TL_OVERRIDE] Calling Trend_Log_Get_Info(%u)...\n", instance);
-    fflush(stdout);
     
     log_info = Trend_Log_Get_Info(instance);
-    
-    printf("[TL_OVERRIDE] Trend_Log_Get_Info() returned: %p\n", (void*)log_info);
-    fflush(stdout);
-    
     if (log_info == NULL) {
-        printf("[TL_OVERRIDE] ERROR: Could not get log info\n");
-        fflush(stdout);
+        printf("✗ Trendlog %u: Could not get log info\n", instance);
         return false;
     }
     
-    printf("[TL_OVERRIDE] Got log info successfully\n");
-    fflush(stdout);
-    
-    printf("[TL_OVERRIDE] Accessing Source structure...\n");
-    fflush(stdout);
-    
-    printf("[TL_OVERRIDE] Source type: %d\n", log_info->Source.objectIdentifier.type);
-    fflush(stdout);
-    
-    printf("[TL_OVERRIDE] Source instance: %u\n", log_info->Source.objectIdentifier.instance);
-    fflush(stdout);
-    
-    printf("[TL_OVERRIDE] Source property: %u\n", log_info->Source.propertyIdentifier);
-    fflush(stdout);
-    
-
-    printf("[TL_OVERRIDE] Source: OBJECT_TYPE_%d[%u].PROPERTY_%u\n",
-           log_info->Source.objectIdentifier.type,
-           log_info->Source.objectIdentifier.instance,
-           log_info->Source.propertyIdentifier);
-    fflush(stdout);
-    
-    /* Tentative de lecture sécurisée */
+    /* Test read of source property */
     len = safe_read_property_for_trendlog(
         test_buffer,
         &log_info->Source,
@@ -261,16 +199,11 @@ bool Trendlog_Test_Source_Read(uint32_t instance)
     );
     
     if (len < 0) {
-        printf("[TL_OVERRIDE] ✗ TEST FAILED: Cannot read source property\n");
-        printf("[TL_OVERRIDE]   Error: class=%d, code=%d\n", error_class, error_code);
-        printf("[TL_OVERRIDE] ========================================\n\n");
-        fflush(stdout);
+        printf("✗ Trendlog %u: Cannot read source (error class=%d, code=%d)\n",
+               instance, error_class, error_code);
         return false;
     }
     
-    printf("[TL_OVERRIDE] ✓ TEST PASSED: Successfully read %d bytes\n", len);
-    printf("[TL_OVERRIDE] ========================================\n\n");
-    fflush(stdout);
-    
+    printf("✓ Trendlog %u: Source read test passed (%d bytes)\n", instance, len);
     return true;
 }

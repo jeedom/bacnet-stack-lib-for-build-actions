@@ -3215,56 +3215,8 @@ int main(int argc, char *argv[])
 
 
         if (mstimer_expired(&Trendlog_Timer)) {
-            static unsigned long tl_call_count = 0;
-            tl_call_count++;
-            
-            printf("\n=== TRENDLOG TIMER EXPIRED (call #%lu) ===\n", tl_call_count);
-            fflush(stdout);
             mstimer_reset(&Trendlog_Timer);
-            
-
-            int tl_index;
-            for (tl_index = 0; tl_index < 3; tl_index++) {
-                if (Trend_Log_Valid_Instance(tl_index)) {
-                    printf("TL[%d]: Valid instance\n", tl_index);
-                    fflush(stdout);
-                    
-
-                    if (TL_Is_Enabled(tl_index)) {
-                        printf("TL[%d]: Enabled\n", tl_index);
-                        fflush(stdout);
-                    } else {
-                        printf("TL[%d]: Disabled (will not log)\n", tl_index);
-                        fflush(stdout);
-                    }
-                }
-            }
-            
-            printf("Before trend_log_timer() call...\n");
-            fflush(stdout);
-            
-            /* Protection: Skip call #10 et multiples de 10 pour éviter le crash lors de l'enregistrement réel */
-            if ((tl_call_count % 10) == 0) {
-                printf("SAFETY: Skipping call #%lu (would trigger actual logging - causes crash)\n", tl_call_count);
-                fflush(stdout);
-            } else if (tl_call_count <= 5) {
-                printf("SAFETY: Calling trend_log_timer(1) - first 5 calls\n");
-                fflush(stdout);
-                
-                /* Appel sécurisé de trend_log_timer */
-                trend_log_timer(1);
-                
-                printf("After trend_log_timer() call - SUCCESS\n");
-                fflush(stdout);
-            } else {
-                /* Après 5 appels réussis, on continue normalement (sauf multiples de 10) */
-                trend_log_timer(1);
-                printf("After trend_log_timer() call - SUCCESS\n");
-                fflush(stdout);
-            }
-            
-            printf("=== TRENDLOG TIMER COMPLETE ===\n\n");
-            fflush(stdout);
+            trend_log_timer(1);
         }
 
         process_socket_io();
