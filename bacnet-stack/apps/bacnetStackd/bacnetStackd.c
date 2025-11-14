@@ -3020,7 +3020,9 @@ int main(int argc, char *argv[])
         clear_all_objects();
         load_config_from_file();
     }
-    mstimer_set(&Trendlog_Timer, 1000);
+    /* TEMPORAIRE: Timer désactivé pour tester si c'est la cause du crash */
+    /* mstimer_set(&Trendlog_Timer, 1000); */
+    printf("WARNING: Trendlog timer DISABLED for debugging\n");
     Send_I_Am(&Rx_Buf[0]);
     printf("I-Am broadcasted\n");
 
@@ -3085,23 +3087,37 @@ int main(int argc, char *argv[])
             }
         }
 
+/* TEMPORAIRE: Timer trendlog désactivé pour debug
 if (mstimer_expired(&Trendlog_Timer)) {
     int i;
     printf("\n=== TRENDLOG TIMER FIRED ===\n");
     mstimer_reset(&Trendlog_Timer);
     
-    /* Vérifier les 3 premiers trend logs */
+    Vérifier les 3 premiers trend logs
     for (i = 0; i < 3; i++) {
-        bool is_enabled = TL_Is_Enabled(i);
-        printf("TL[%d]: TL_Is_Enabled() = %d\n", i, is_enabled);
+        if (Trend_Log_Valid_Instance(i)) {
+            bool is_enabled = TL_Is_Enabled(i);
+            printf("TL[%d]: Valid=%d, Enabled=%d\n", i, 1, is_enabled);
+        } else {
+            printf("TL[%d]: Invalid instance\n", i);
+        }
     }
     
     printf("Calling trend_log_timer(1)...\n");
+    fflush(stdout);
+    
+    Protection contre les crashs
+    #ifdef __linux__
+    __sync_synchronize();
+    #endif
+    
     trend_log_timer(1);
     
+    printf("trend_log_timer(1) returned successfully\n");
+    fflush(stdout);
     printf("=== DONE ===\n\n");
 }
-
+*/
 
         process_socket_io();
     }
