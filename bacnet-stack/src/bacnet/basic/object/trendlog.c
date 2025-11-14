@@ -1759,16 +1759,28 @@ void trend_log_timer(uint16_t uSeconds)
     bacnet_time_t tNow = 0;
 
     (void)uSeconds;
+    printf("[trend_log_timer] ENTER\n");
+    fflush(stdout);
     /* use OS to get the current time */
     tNow = Trend_Log_Epoch_Seconds_Now();
+    printf("[trend_log_timer] tNow=%lu, scanning %d logs...\n", (unsigned long)tNow, MAX_TREND_LOGS);
+    fflush(stdout);
     for (iCount = 0; iCount < MAX_TREND_LOGS; iCount++) {
+        printf("[trend_log_timer] Checking log %d...\n", iCount);
+        fflush(stdout);
         CurrentLog = &LogInfo[iCount];
         if (TL_Is_Enabled(iCount)) {
+            printf("[trend_log_timer] Log %d is ENABLED\n", iCount);
+            fflush(stdout);
             if (CurrentLog->LoggingType == LOGGING_TYPE_POLLED) {
+                printf("[trend_log_timer] Log %d is POLLED\n", iCount);
+                fflush(stdout);
                 /* For polled logs we first need to see if they are clock
                  * aligned or not.
                  */
                 if (CurrentLog->bAlignIntervals == true) {
+                    printf("[trend_log_timer] Log %d uses ALIGNED intervals\n", iCount);
+                    fflush(stdout);
                     /* Aligned logging so use the combination of the
                      * interval and the offset to decide when to log. Also
                      * log a reading if more than interval time has elapsed
@@ -1784,14 +1796,20 @@ void trend_log_timer(uint16_t uSeconds)
                     if ((tNow % CurrentLog->ulLogInterval) ==
                         (CurrentLog->ulIntervalOffset %
                          CurrentLog->ulLogInterval)) {
+                        printf("[trend_log_timer] Log %d: Time match! Calling TL_fetch_property...\n", iCount);
+                        fflush(stdout);
                         /* Record value if time synchronised trigger
                          * condition is met and at least one period has
                          * elapsed.
                          */
                         TL_fetch_property(iCount);
+                        printf("[trend_log_timer] Log %d: TL_fetch_property returned\n", iCount);
+                        fflush(stdout);
                     } else if (
                         (tNow - CurrentLog->tLastDataTime) >
                         CurrentLog->ulLogInterval) {
+                        printf("[trend_log_timer] Log %d: Overdue! Calling TL_fetch_property...\n", iCount);
+                        fflush(stdout);
                         /* Also record value if we have waited more than a
                          * period since the last reading. This ensures we
                          * take a reading as soon as possible after a power
@@ -1799,28 +1817,42 @@ void trend_log_timer(uint16_t uSeconds)
                          * period.
                          */
                         TL_fetch_property(iCount);
+                        printf("[trend_log_timer] Log %d: TL_fetch_property returned\n", iCount);
+                        fflush(stdout);
                     }
                 } else if (
                     ((tNow - CurrentLog->tLastDataTime) >=
                      CurrentLog->ulLogInterval) ||
                     (CurrentLog->bTrigger == true)) {
+                    printf("[trend_log_timer] Log %d: Non-aligned trigger. Calling TL_fetch_property...\n", iCount);
+                    fflush(stdout);
                     /* If not aligned take a reading when we have either
                      * waited long enough or a trigger is set.
                      */
                     TL_fetch_property(iCount);
+                    printf("[trend_log_timer] Log %d: TL_fetch_property returned\n", iCount);
+                    fflush(stdout);
                 }
                 CurrentLog->bTrigger = false; /* Clear this every time */
             } else if (CurrentLog->LoggingType == LOGGING_TYPE_TRIGGERED) {
+                printf("[trend_log_timer] Log %d is TRIGGERED\n", iCount);
+                fflush(stdout);
                 /* Triggered logs take a reading when the trigger is set and
                  * then reset the trigger to wait for the next event
                  */
                 if (CurrentLog->bTrigger == true) {
+                    printf("[trend_log_timer] Log %d: Trigger set. Calling TL_fetch_property...\n", iCount);
+                    fflush(stdout);
                     TL_fetch_property(iCount);
+                    printf("[trend_log_timer] Log %d: TL_fetch_property returned\n", iCount);
+                    fflush(stdout);
                     CurrentLog->bTrigger = false;
                 }
             }
         }
     }
+    printf("[trend_log_timer] EXIT (scanned all logs)\n");
+    fflush(stdout);
 }
 
 bool Trend_Log_Configure_Direct(
