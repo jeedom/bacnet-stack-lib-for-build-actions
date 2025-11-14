@@ -1977,6 +1977,89 @@ static int apply_config_from_json(const char *json_text)
     
     printf("=== Phase 2 complete ===\n");
     
+    /* ========================================
+     * Phase 3: Désactiver les trendlogs non configurés
+     * ======================================== */
+    printf("=== Phase 3: Disabling unconfigured Trendlogs ===\n");
+    {
+        unsigned int i;
+        int configured_count = 0;
+        int disabled_count = 0;
+        
+        for (i = 0; i < MAX_TREND_LOGS; i++) {
+            if (Trend_Log_Valid_Instance(i) && TL_Is_Enabled(i)) {
+
+                bool source_valid = false;
+                TL_LOG_INFO *log_info = Trend_Log_Get_Info(i);
+                
+                if (log_info != NULL) {
+                    BACNET_DEVICE_OBJECT_PROPERTY_REFERENCE *src = &log_info->Source;
+                    
+                    switch (src->objectIdentifier.type) {
+                        case OBJECT_ANALOG_INPUT:
+                            source_valid = Analog_Input_Valid_Instance(src->objectIdentifier.instance);
+                            break;
+                        case OBJECT_ANALOG_OUTPUT:
+                            source_valid = Analog_Output_Valid_Instance(src->objectIdentifier.instance);
+                            break;
+                        case OBJECT_ANALOG_VALUE:
+                            source_valid = Analog_Value_Valid_Instance(src->objectIdentifier.instance);
+                            break;
+                        case OBJECT_BINARY_INPUT:
+                            source_valid = Binary_Input_Valid_Instance(src->objectIdentifier.instance);
+                            break;
+                        case OBJECT_BINARY_OUTPUT:
+                            source_valid = Binary_Output_Valid_Instance(src->objectIdentifier.instance);
+                            break;
+                        case OBJECT_BINARY_VALUE:
+                            source_valid = Binary_Value_Valid_Instance(src->objectIdentifier.instance);
+                            break;
+                        default:
+                            source_valid = false;
+                            break;
+                    }
+                    
+                    if (source_valid) {
+                        configured_count++;
+                        printf("  TL[%u]: Enabled, source %s[%u] VALID\n", 
+                               i,
+                               bactext_object_type_name(src->objectIdentifier.type),
+                               src->objectIdentifier.instance);
+                    } else {
+
+                        BACNET_WRITE_PROPERTY_DATA wp_data;
+                        BACNET_APPLICATION_DATA_VALUE value;
+                        
+                        memset(&wp_data, 0, sizeof(wp_data));
+                        memset(&value, 0, sizeof(value));
+                        
+                        value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
+                        value.type.Boolean = false;
+                        
+                        int len = bacapp_encode_application_data(wp_data.application_data, &value);
+                        
+                        wp_data.object_type = OBJECT_TRENDLOG;
+                        wp_data.object_instance = i;
+                        wp_data.object_property = PROP_ENABLE;
+                        wp_data.array_index = BACNET_ARRAY_ALL;
+                        wp_data.application_data_len = len;
+                        
+                        Trend_Log_Write_Property(&wp_data);
+                        disabled_count++;
+                        
+                        printf("  TL[%u]: DISABLED (invalid source %s[%u])\n", 
+                               i,
+                               bactext_object_type_name(src->objectIdentifier.type),
+                               src->objectIdentifier.instance);
+                    }
+                }
+            }
+        }
+        
+        printf("=== Phase 3 complete: %d configured, %d disabled ===\n", 
+               configured_count, disabled_count);
+    }
+    
     json_decref(root);
     printf("Object creation complete.\n");
     printf("  AI: %u, AO: %u, AV: %u\n", 
