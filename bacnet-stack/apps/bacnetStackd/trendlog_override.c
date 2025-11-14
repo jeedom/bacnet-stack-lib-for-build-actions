@@ -33,6 +33,7 @@ static int safe_read_property_for_trendlog(
 {
     int len = 0;
     BACNET_READ_PROPERTY_DATA rpdata;
+    bool object_exists = false;
 
     if (value == NULL) {
         *error_class = ERROR_CLASS_SERVICES;
@@ -41,7 +42,6 @@ static int safe_read_property_for_trendlog(
     }
 
     /* Verify source object exists */
-    bool object_exists = false;
     switch (Source->objectIdentifier.type) {
         case OBJECT_ANALOG_INPUT:
             object_exists = Analog_Input_Valid_Instance(Source->objectIdentifier.instance);
@@ -92,7 +92,6 @@ static int safe_read_property_for_trendlog(
     }
     
     return len;
-}
 }
 
 /**
