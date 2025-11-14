@@ -27,4 +27,11 @@ bool Trendlog_Delete(uint32_t object_instance);
  */
 void Trendlog_Delete_All(void);
 
+/**
+ * @brief Teste si un trendlog peut lire sa source sans crasher
+ * @param instance Instance du Trendlog à tester
+ * @return true si la lecture fonctionne, false sinon
+ */
+bool Trendlog_Test_Source_Read(uint32_t instance);
+
 #endif /* TRENDLOG_OVERRIDE_H */

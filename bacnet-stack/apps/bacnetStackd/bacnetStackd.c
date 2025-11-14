@@ -298,7 +298,32 @@ static bool create_trendlog(uint32_t instance, const char *name,
         printf("  ✓ Stop When Full: NO (circular)\n");
         printf("  ✓ Enabled: %s\n", enable ? "YES" : "NO");
         printf("  ✓ Buffer cleared (ready for logging)\n");
-        success = true;
+        
+        /* TEST: Vérifier que la lecture de la source fonctionne avant d'activer */
+        printf("\n  → Testing source read before enabling...\n");
+        fflush(stdout);
+        
+        if (Trendlog_Test_Source_Read(instance)) {
+            printf("  ✓ Source read test PASSED - Trendlog safe to use\n");
+            success = true;
+        } else {
+            printf("  ✗ Source read test FAILED - Disabling trendlog to prevent crash\n");
+            BACNET_WRITE_PROPERTY_DATA wp_data;
+            BACNET_APPLICATION_DATA_VALUE value;
+            memset(&wp_data, 0, sizeof(wp_data));
+            memset(&value, 0, sizeof(value));
+            value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
+            value.type.Boolean = false;
+            int len = bacapp_encode_application_data(wp_data.application_data, &value);
+            wp_data.object_type = OBJECT_TRENDLOG;
+            wp_data.object_instance = instance;
+            wp_data.object_property = PROP_ENABLE;
+            wp_data.array_index = BACNET_ARRAY_ALL;
+            wp_data.application_data_len = len;
+            Trend_Log_Write_Property(&wp_data);
+            printf("  ✓ Trendlog disabled (source read failed)\n");
+            success = false;
+        }
     } else {
         fprintf(stderr, "  ✗ Failed to configure via direct method\n");
         success = false;
