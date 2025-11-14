@@ -192,9 +192,6 @@ static bool set_object_name(BACNET_OBJECT_TYPE obj_type, uint32_t instance, cons
         case OBJECT_MULTI_STATE_VALUE:
             status = Multistate_Value_Name_Set(instance, name);
             break;
-        case OBJECT_SCHEDULE:
-            status = Schedule_Name_Set(instance, name);
-            break;
         default:
             break;
     }
