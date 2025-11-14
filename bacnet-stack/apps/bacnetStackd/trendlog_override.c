@@ -212,13 +212,37 @@ bool Trendlog_Test_Source_Read(uint32_t instance)
         fflush(stdout);
         return false;
     }
+    printf("[TL_OVERRIDE] Instance %u is valid\n", instance);
+    fflush(stdout);
+    
+    printf("[TL_OVERRIDE] Calling Trend_Log_Get_Info(%u)...\n", instance);
+    fflush(stdout);
     
     log_info = Trend_Log_Get_Info(instance);
+    
+    printf("[TL_OVERRIDE] Trend_Log_Get_Info() returned: %p\n", (void*)log_info);
+    fflush(stdout);
+    
     if (log_info == NULL) {
         printf("[TL_OVERRIDE] ERROR: Could not get log info\n");
         fflush(stdout);
         return false;
     }
+    
+    printf("[TL_OVERRIDE] Got log info successfully\n");
+    fflush(stdout);
+    
+    printf("[TL_OVERRIDE] Accessing Source structure...\n");
+    fflush(stdout);
+    
+    printf("[TL_OVERRIDE] Source type: %d\n", log_info->Source.objectIdentifier.type);
+    fflush(stdout);
+    
+    printf("[TL_OVERRIDE] Source instance: %u\n", log_info->Source.objectIdentifier.instance);
+    fflush(stdout);
+    
+    printf("[TL_OVERRIDE] Source property: %u\n", log_info->Source.propertyIdentifier);
+    fflush(stdout);
     
     printf("[TL_OVERRIDE] Source: %s[%u].%u\n",
            bactext_object_type_name(log_info->Source.objectIdentifier.type),
