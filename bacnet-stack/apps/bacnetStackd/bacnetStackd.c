@@ -75,48 +75,56 @@ static void Schedule_Init_Empty(void)
 static void Trend_Log_Init_Empty(void)
 {
     unsigned int i;
-    BACNET_WRITE_PROPERTY_DATA wp_data;
-    BACNET_APPLICATION_DATA_VALUE value;
-    int len;
+    TL_LOG_INFO *log_info;
     
-    printf("Trend_Log_Init_Empty: Disabling all %d Trendlogs...\n", MAX_TREND_LOGS);
+    printf("Trend_Log_Init_Empty: Initializing %d Trendlogs (all disabled, empty buffers)...\n", MAX_TREND_LOGS);
     
-    /* Désactiver TOUS les Trendlogs */
+    /* 
+     * Initialisation minimale : désactiver tous les trendlogs et vider les buffers
+     * On ne crée PAS de données de test comme le fait Trend_Log_Init() de la bibliothèque
+     */
     for (i = 0; i < MAX_TREND_LOGS; i++) {
-        if (!Trend_Log_Valid_Instance(i)) {
+        log_info = Trend_Log_Get_Info(i);
+        if (log_info == NULL) {
             continue;
         }
         
-        /* ENABLE = FALSE */
-        memset(&wp_data, 0, sizeof(wp_data));
-        memset(&value, 0, sizeof(value));
+        /* Paramètres de base (désactivé, buffer vide) */
+        log_info->bEnable = false;              /* DÉSACTIVÉ par défaut */
+        log_info->bStopWhenFull = false;        /* Mode circulaire */
+        log_info->bTrigger = false;
+        log_info->bAlignIntervals = true;
+        log_info->LoggingType = LOGGING_TYPE_POLLED;
         
-        value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
-        value.type.Boolean = false;
+        /* Buffer vide */
+        log_info->ulRecordCount = 0;            /* Aucune donnée */
+        log_info->ulTotalRecordCount = 0;
+        log_info->iIndex = 0;
         
-        len = bacapp_encode_application_data(wp_data.application_data, &value);
+        /* Intervalle par défaut (sera configuré depuis le JSON) */
+        log_info->ulLogInterval = 60;           /* 60 secondes par défaut */
+        log_info->ulIntervalOffset = 0;
+        log_info->tLastDataTime = 0;
+        log_info->ucTimeFlags = 0;
         
-        wp_data.object_type = OBJECT_TRENDLOG;
-        wp_data.object_instance = i;
-        wp_data.object_property = PROP_ENABLE;
-        wp_data.array_index = BACNET_ARRAY_ALL;
-        wp_data.application_data_len = len;
+        /* Source invalide (sera configurée depuis le JSON) */
+        log_info->Source.deviceIdentifier.type = OBJECT_DEVICE;
+        log_info->Source.deviceIdentifier.instance = Device_Object_Instance_Number();
+        log_info->Source.objectIdentifier.type = MAX_BACNET_OBJECT_TYPE;  /* Type invalide */
+        log_info->Source.objectIdentifier.instance = BACNET_MAX_INSTANCE; /* Instance invalide */
+        log_info->Source.propertyIdentifier = PROP_PRESENT_VALUE;
+        log_info->Source.arrayIndex = BACNET_ARRAY_ALL;
         
-        Trend_Log_Write_Property(&wp_data);
-        
-        /* RECORD_COUNT = 0 (effacer buffer) */
-        memset(&value, 0, sizeof(value));
-        value.tag = BACNET_APPLICATION_TAG_UNSIGNED_INT;
-        value.type.Unsigned_Int = 0;
-        
-        len = bacapp_encode_application_data(wp_data.application_data, &value);
-        wp_data.object_property = PROP_RECORD_COUNT;
-        wp_data.application_data_len = len;
-        
-        Trend_Log_Write_Property(&wp_data);
+        /* Temps de début/fin (wildcards = toujours actif si enable=true) */
+        datetime_wildcard(&log_info->StartTime);
+        datetime_wildcard(&log_info->StopTime);
+        log_info->tStartTime = 0;
+        log_info->tStopTime = datetime_seconds_since_epoch_max();
+        log_info->ucTimeFlags = TL_T_START_WILD | TL_T_STOP_WILD;
     }
     
-    printf("Trend_Log_Init_Empty: All Trendlogs disabled and cleared.\n");
+    printf("Trend_Log_Init_Empty: All %d Trendlogs initialized (disabled, empty).\n", MAX_TREND_LOGS);
+    printf("  Trendlogs will only be activated when configured from JSON.\n");
 }
 
 
