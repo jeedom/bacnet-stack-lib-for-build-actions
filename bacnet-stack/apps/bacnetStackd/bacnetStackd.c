@@ -3097,12 +3097,53 @@ int main(int argc, char *argv[])
             }
         }
 
-        /* Timer Trendlog - Avec protections contre les crashs */
+
         if (mstimer_expired(&Trendlog_Timer)) {
+            static unsigned long tl_call_count = 0;
+            tl_call_count++;
+            
+            printf("\n=== TRENDLOG TIMER EXPIRED (call #%lu) ===\n", tl_call_count);
+            fflush(stdout);
             mstimer_reset(&Trendlog_Timer);
             
-            /* Appel sécurisé de trend_log_timer */
-            trend_log_timer(1);
+
+            int tl_index;
+            for (tl_index = 0; tl_index < 3; tl_index++) {
+                if (Trend_Log_Valid_Instance(tl_index)) {
+                    printf("TL[%d]: Valid instance\n", tl_index);
+                    fflush(stdout);
+                    
+
+                    if (TL_Is_Enabled(tl_index)) {
+                        printf("TL[%d]: Enabled\n", tl_index);
+                        fflush(stdout);
+                    } else {
+                        printf("TL[%d]: Disabled (will not log)\n", tl_index);
+                        fflush(stdout);
+                    }
+                }
+            }
+            
+            printf("Before trend_log_timer() call...\n");
+            fflush(stdout);
+            
+
+            if (tl_call_count <= 5) {
+                printf("SAFETY: Calling trend_log_timer(1) - first 5 calls\n");
+                fflush(stdout);
+                
+
+                trend_log_timer(1);
+                
+                printf("After trend_log_timer() call - SUCCESS\n");
+                fflush(stdout);
+            } else {
+
+                trend_log_timer(1);
+            }
+            
+            printf("=== TRENDLOG TIMER COMPLETE ===\n\n");
+            fflush(stdout);
         }
 
         process_socket_io();
