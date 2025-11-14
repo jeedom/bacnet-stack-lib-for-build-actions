@@ -1348,8 +1348,13 @@ static int apply_config_from_json(const char *json_text)
                     set_object_name(OBJECT_ANALOG_INPUT, inst, name_copy);
                 }
             }
+            /* Initialisation obligatoire de la valeur (défaut = 0.0 si absente) */
             if (json_is_number(jpv)) {
                 Analog_Input_Present_Value_Set(inst, (float)json_number_value(jpv));
+                printf("Analog Input %u: Present_Value = %.2f\n", inst, (float)json_number_value(jpv));
+            } else {
+                Analog_Input_Present_Value_Set(inst, 0.0f);
+                printf("Analog Input %u: Present_Value = 0.0 (default)\n", inst);
             }
             Analog_Input_Out_Of_Service_Set(inst, true);
         } 
@@ -1372,8 +1377,13 @@ static int apply_config_from_json(const char *json_text)
                     set_object_name(OBJECT_ANALOG_VALUE, inst, name_copy);
                 }
             }
+            /* Initialisation obligatoire de la valeur (défaut = 0.0 si absente) */
             if (json_is_number(jpv)) {
                 Analog_Value_Present_Value_Set(inst, (float)json_number_value(jpv), BACNET_MAX_PRIORITY);
+                printf("Analog Value %u: Present_Value = %.2f\n", inst, (float)json_number_value(jpv));
+            } else {
+                Analog_Value_Present_Value_Set(inst, 0.0f, BACNET_MAX_PRIORITY);
+                printf("Analog Value %u: Present_Value = 0.0 (default)\n", inst);
             }
             Analog_Value_Out_Of_Service_Set(inst, true);
         } 
@@ -3020,9 +3030,9 @@ int main(int argc, char *argv[])
         clear_all_objects();
         load_config_from_file();
     }
-    /* TEMPORAIRE: Timer désactivé pour tester si c'est la cause du crash */
-    /* mstimer_set(&Trendlog_Timer, 1000); */
-    printf("WARNING: Trendlog timer DISABLED for debugging\n");
+
+    mstimer_set(&Trendlog_Timer, 1000);
+    printf("Trendlog timer initialized (1 second interval)\n");
     Send_I_Am(&Rx_Buf[0]);
     printf("I-Am broadcasted\n");
 
@@ -3087,37 +3097,13 @@ int main(int argc, char *argv[])
             }
         }
 
-/* TEMPORAIRE: Timer trendlog désactivé pour debug
-if (mstimer_expired(&Trendlog_Timer)) {
-    int i;
-    printf("\n=== TRENDLOG TIMER FIRED ===\n");
-    mstimer_reset(&Trendlog_Timer);
-    
-    Vérifier les 3 premiers trend logs
-    for (i = 0; i < 3; i++) {
-        if (Trend_Log_Valid_Instance(i)) {
-            bool is_enabled = TL_Is_Enabled(i);
-            printf("TL[%d]: Valid=%d, Enabled=%d\n", i, 1, is_enabled);
-        } else {
-            printf("TL[%d]: Invalid instance\n", i);
+        /* Timer Trendlog - Avec protections contre les crashs */
+        if (mstimer_expired(&Trendlog_Timer)) {
+            mstimer_reset(&Trendlog_Timer);
+            
+            /* Appel sécurisé de trend_log_timer */
+            trend_log_timer(1);
         }
-    }
-    
-    printf("Calling trend_log_timer(1)...\n");
-    fflush(stdout);
-    
-    Protection contre les crashs
-    #ifdef __linux__
-    __sync_synchronize();
-    #endif
-    
-    trend_log_timer(1);
-    
-    printf("trend_log_timer(1) returned successfully\n");
-    fflush(stdout);
-    printf("=== DONE ===\n\n");
-}
-*/
 
         process_socket_io();
     }
