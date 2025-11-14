@@ -33,15 +33,10 @@ static int safe_read_property_for_trendlog(
 {
     int len = 0;
     BACNET_READ_PROPERTY_DATA rpdata;
-    const char *type_name;
     
-    type_name = bactext_object_type_name(Source->objectIdentifier.type);
-    if (type_name == NULL) {
-        type_name = "UNKNOWN";
-    }
-    
-    printf("[TL_OVERRIDE] Reading property from %s[%u].%u\n",
-           type_name,
+
+    printf("[TL_OVERRIDE] Reading property from OBJECT_TYPE_%d[%u].PROPERTY_%u\n",
+           Source->objectIdentifier.type,
            Source->objectIdentifier.instance,
            Source->propertyIdentifier);
     fflush(stdout);
@@ -250,22 +245,9 @@ bool Trendlog_Test_Source_Read(uint32_t instance)
     printf("[TL_OVERRIDE] Source property: %u\n", log_info->Source.propertyIdentifier);
     fflush(stdout);
     
-    printf("[TL_OVERRIDE] Calling bactext_object_type_name()...\n");
-    fflush(stdout);
-    
-    const char *type_name = bactext_object_type_name(log_info->Source.objectIdentifier.type);
-    
-    printf("[TL_OVERRIDE] bactext_object_type_name() returned: %p\n", (void*)type_name);
-    fflush(stdout);
-    
-    if (type_name == NULL) {
-        printf("[TL_OVERRIDE] WARNING: bactext_object_type_name returned NULL, using 'UNKNOWN'\n");
-        type_name = "UNKNOWN";
-    }
-    fflush(stdout);
-    
-    printf("[TL_OVERRIDE] Source: %s[%u].%u\n",
-           type_name,
+
+    printf("[TL_OVERRIDE] Source: OBJECT_TYPE_%d[%u].PROPERTY_%u\n",
+           log_info->Source.objectIdentifier.type,
            log_info->Source.objectIdentifier.instance,
            log_info->Source.propertyIdentifier);
     fflush(stdout);
