@@ -1634,16 +1634,16 @@ static void TL_fetch_property(int iLog)
     TempRec.ucStatus = 0;
 
      printf("\n=== TL_fetch_property(%d) ===\n", iLog);
-    printf("Source: %s:%u property:%u\n",
-           bactext_object_type_name(LogInfo[iLog].Source.objectIdentifier.type),
+    printf("Source: OBJECT_TYPE_%u[%u].PROPERTY_%u\n",
+           LogInfo[iLog].Source.objectIdentifier.type,
            LogInfo[iLog].Source.objectIdentifier.instance,
            LogInfo[iLog].Source.propertyIdentifier);
 
     iLen = local_read_property(
         ValueBuf, StatusBuf, &LogInfo[iLog].Source, &error_class, &error_code);
-        printf("TL_fetch_property(%d): object=%s:%u, iLen=%d, error_class=%d, error_code=%d\n",
+        printf("TL_fetch_property(%d): OBJECT_TYPE_%u[%u], iLen=%d, error_class=%d, error_code=%d\n",
            iLog,
-           bactext_object_type_name(LogInfo[iLog].Source.objectIdentifier.type),
+           LogInfo[iLog].Source.objectIdentifier.type,
            LogInfo[iLog].Source.objectIdentifier.instance,
            iLen,
            error_class,
