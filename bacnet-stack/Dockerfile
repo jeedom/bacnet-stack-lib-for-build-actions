@@ -29,7 +29,7 @@ SHELL ["/bin/bash", "-c"]
 
 RUN set -xe; \
   apt-get update; apt-get upgrade -y; apt-get --purge autoremove -y; \
-  apt-get install -y build-essential curl; \
+  apt-get install -y build-essential curl libcurl4-openssl-dev; \
   apt-get -y autoclean; apt-get -y clean
 
 RUN set -euxo pipefail; \
