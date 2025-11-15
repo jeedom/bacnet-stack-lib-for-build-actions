@@ -3282,6 +3282,55 @@ if (strcmp(cmd, "trendlog-data") == 0) {
         return false;
     }
     
+
+    if (strcmp(cmd, "READ_PROP") == 0) {
+        int obj_type, obj_instance, prop_id;
+        BACNET_APPLICATION_DATA_VALUE value;
+        char response[256];
+        bool status;
+        
+        if (sscanf(line, "READ_PROP %d %d %d", &obj_type, &obj_instance, &prop_id) == 3) {
+            status = Device_Read_Property_Local(
+                (BACNET_OBJECT_TYPE)obj_type,
+                obj_instance,
+                (BACNET_PROPERTY_ID)prop_id,
+                BACNET_ARRAY_ALL,
+                &value
+            );
+            
+            if (status) {
+                switch (value.tag) {
+                    case BACNET_APPLICATION_TAG_REAL:
+                        snprintf(response, sizeof(response), "OK %.2f\n", value.type.Real);
+                        break;
+                    case BACNET_APPLICATION_TAG_DOUBLE:
+                        snprintf(response, sizeof(response), "OK %.2f\n", value.type.Double);
+                        break;
+                    case BACNET_APPLICATION_TAG_UNSIGNED_INT:
+                        snprintf(response, sizeof(response), "OK %u\n", (unsigned)value.type.Unsigned_Int);
+                        break;
+                    case BACNET_APPLICATION_TAG_SIGNED_INT:
+                        snprintf(response, sizeof(response), "OK %d\n", value.type.Signed_Int);
+                        break;
+                    case BACNET_APPLICATION_TAG_BOOLEAN:
+                        snprintf(response, sizeof(response), "OK %d\n", value.type.Boolean ? 1 : 0);
+                        break;
+                    case BACNET_APPLICATION_TAG_ENUMERATED:
+                        snprintf(response, sizeof(response), "OK %u\n", (unsigned)value.type.Enumerated);
+                        break;
+                    default:
+                        snprintf(response, sizeof(response), "ERR unsupported type\n");
+                }
+                write(g_client_fd, response, strlen(response));
+            } else {
+                write(g_client_fd, "ERR read failed\n", 16);
+            }
+        } else {
+            write(g_client_fd, "Usage: READ_PROP type instance property\n", 41);
+        }
+        return false;
+    }
+    
     (void)write(g_client_fd, "ERR unknown\n", 12);
     return 0;
 }
