@@ -173,7 +173,12 @@ static void notify_write_callback(
     root = NULL;
     obj_json = NULL;
     
+    printf("DEBUG notify_write_callback: URL='%s'\n", g_write_callback_url);
+    fflush(stdout);
+    
     if (!g_write_callback_url[0]) {
+        printf("DEBUG: Callback URL vide, abandon\n");
+        fflush(stdout);
         return;
     }
     
@@ -191,16 +196,24 @@ static void notify_write_callback(
         strcpy(src_address, "UNKNOWN");
     }
     
+    printf("DEBUG: Source=%s, checking config_root...\n", src_address);
+    fflush(stdout);
 
     if (!g_config_root || !json_is_object(g_config_root)) {
+        printf("DEBUG: g_config_root invalide, abandon\n");
+        fflush(stdout);
         return;
     }
     
     objects = json_object_get(g_config_root, "objects");
     if (!objects || !json_is_array(objects)) {
+        printf("DEBUG: objects array invalide, abandon\n");
+        fflush(stdout);
         return;
     }
     
+    printf("DEBUG: Recherche objet type=%d instance=%u...\n", object_type, object_instance);
+    fflush(stdout);
 
     json_array_foreach(objects, index, value) {
         jtype = json_object_get(value, "type");
@@ -215,9 +228,13 @@ static void notify_write_callback(
     }
     
     if (!obj_json) {
+        printf("DEBUG: Objet type=%d instance=%u non trouvé dans config, abandon\n", object_type, object_instance);
+        fflush(stdout);
         return; 
     }
     
+    printf("DEBUG: Objet trouvé ! Construction JSON et envoi HTTP POST...\n");
+    fflush(stdout);
 
     root = json_object();
     json_object_set_new(root, "event", json_string("write"));
@@ -232,9 +249,13 @@ static void notify_write_callback(
     json_payload = json_dumps(root, JSON_COMPACT);
     
     if (json_payload) {
+        printf("DEBUG: JSON créé: %s\n", json_payload);
+        fflush(stdout);
 
         curl = curl_easy_init();
         if (curl) {
+            CURLcode res;
+            
             headers = NULL;
             headers = curl_slist_append(headers, "Content-Type: application/json");
             
@@ -245,10 +266,21 @@ static void notify_write_callback(
             curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
             
 
-            curl_easy_perform(curl);
+            res = curl_easy_perform(curl);
+            
+            if (res != CURLE_OK) {
+                printf("DEBUG: curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+                fflush(stdout);
+            } else {
+                printf("DEBUG: HTTP POST réussi vers %s\n", g_write_callback_url);
+                fflush(stdout);
+            }
             
             curl_slist_free_all(headers);
             curl_easy_cleanup(curl);
+        } else {
+            printf("DEBUG: curl_easy_init() failed\n");
+            fflush(stdout);
         }
         
         free(json_payload);
