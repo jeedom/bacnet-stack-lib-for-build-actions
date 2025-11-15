@@ -171,100 +171,57 @@ static void notify_write_callback(
     BACNET_ADDRESS *src,
     BACNET_OBJECT_TYPE object_type,
     uint32_t object_instance,
-    BACNET_PROPERTY_ID property)
+    BACNET_PROPERTY_ID property,
+    BACNET_APPLICATION_DATA_VALUE *value)
 {
     char src_address[256];
     char *json_payload;
     json_t *root;
-    json_t *obj_json;
-    json_t *objects;
-    size_t index;
-    json_t *value;
-    json_t *jtype;
-    json_t *jinst;
     CURL *curl;
     struct curl_slist *headers;
-    
-    json_payload = NULL;
-    root = NULL;
-    obj_json = NULL;
-    
-    printf("DEBUG notify_write_callback: URL='%s'\n", g_write_callback_url);
-    fflush(stdout);
+    char value_str[64];
     
     if (!g_write_callback_url[0]) {
-        printf("DEBUG: Callback URL vide, abandon\n");
-        fflush(stdout);
         return;
     }
     
 
-    if (src && src->len > 0) {
-        if (src->len == 6) {
-            snprintf(src_address, sizeof(src_address),
-                    "%u.%u.%u.%u:%u",
-                    src->adr[0], src->adr[1], src->adr[2], src->adr[3],
-                    (src->adr[4] << 8) | src->adr[5]);
-        } else {
-            strcpy(src_address, "MAC:unknown");
-        }
+    if (src && src->len == 6) {
+        snprintf(src_address, sizeof(src_address),
+                "%u.%u.%u.%u:%u",
+                src->adr[0], src->adr[1], src->adr[2], src->adr[3],
+                (src->adr[4] << 8) | src->adr[5]);
     } else {
         strcpy(src_address, "UNKNOWN");
     }
     
-    printf("DEBUG: Source=%s, checking config_root...\n", src_address);
-    fflush(stdout);
 
-    if (!g_config_root || !json_is_object(g_config_root)) {
-        printf("DEBUG: g_config_root invalide, abandon\n");
-        fflush(stdout);
-        return;
-    }
-    
-    objects = json_object_get(g_config_root, "objects");
-    if (!objects || !json_is_array(objects)) {
-        printf("DEBUG: objects array invalide, abandon\n");
-        fflush(stdout);
-        return;
-    }
-    
-    printf("DEBUG: Recherche objet type=%d instance=%u...\n", object_type, object_instance);
-    fflush(stdout);
-
-    json_array_foreach(objects, index, value) {
-        BACNET_OBJECT_TYPE json_type;
-        uint32_t json_instance;
-        
-        jtype = json_object_get(value, "type");
-        jinst = json_object_get(value, "instance");
-        
-        if (!jtype || !jinst) continue;
-        
-
-        if (json_is_integer(jtype)) {
-            json_type = (BACNET_OBJECT_TYPE)json_integer_value(jtype);
-        } else if (json_is_string(jtype)) {
-            json_type = string_to_object_type(json_string_value(jtype));
-        } else {
-            continue;
+    if (value) {
+        switch (value->tag) {
+            case BACNET_APPLICATION_TAG_REAL:
+                snprintf(value_str, sizeof(value_str), "%.2f", value->type.Real);
+                break;
+            case BACNET_APPLICATION_TAG_DOUBLE:
+                snprintf(value_str, sizeof(value_str), "%.2f", value->type.Double);
+                break;
+            case BACNET_APPLICATION_TAG_UNSIGNED_INT:
+                snprintf(value_str, sizeof(value_str), "%u", (unsigned)value->type.Unsigned_Int);
+                break;
+            case BACNET_APPLICATION_TAG_SIGNED_INT:
+                snprintf(value_str, sizeof(value_str), "%d", value->type.Signed_Int);
+                break;
+            case BACNET_APPLICATION_TAG_BOOLEAN:
+                snprintf(value_str, sizeof(value_str), "%d", value->type.Boolean ? 1 : 0);
+                break;
+            case BACNET_APPLICATION_TAG_ENUMERATED:
+                snprintf(value_str, sizeof(value_str), "%u", (unsigned)value->type.Enumerated);
+                break;
+            default:
+                strcpy(value_str, "unknown");
         }
-        
-        json_instance = (uint32_t)json_integer_value(jinst);
-        
-        if (json_type == object_type && json_instance == object_instance) {
-            obj_json = value;
-            break;
-        }
+    } else {
+        strcpy(value_str, "null");
     }
-    
-    if (!obj_json) {
-        printf("DEBUG: Objet type=%d instance=%u non trouvé dans config, abandon\n", object_type, object_instance);
-        fflush(stdout);
-        return; 
-    }
-    
-    printf("DEBUG: Objet trouvé ! Construction JSON et envoi HTTP POST...\n");
-    fflush(stdout);
 
     root = json_object();
     json_object_set_new(root, "event", json_string("write"));
@@ -272,53 +229,31 @@ static void notify_write_callback(
     json_object_set_new(root, "object_type", json_integer(object_type));
     json_object_set_new(root, "instance", json_integer(object_instance));
     json_object_set_new(root, "property", json_integer(property));
-    
-
-    json_object_set(root, "object_data", obj_json);
+    json_object_set_new(root, "value", json_string(value_str));
     
     json_payload = json_dumps(root, JSON_COMPACT);
     
     if (json_payload) {
-        printf("DEBUG: JSON créé: %s\n", json_payload);
-        fflush(stdout);
-
         curl = curl_easy_init();
         if (curl) {
-            CURLcode res;
-            
-            headers = NULL;
-            headers = curl_slist_append(headers, "Content-Type: application/json");
+            headers = curl_slist_append(NULL, "Content-Type: application/json");
             
             curl_easy_setopt(curl, CURLOPT_URL, g_write_callback_url);
             curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_payload);
             curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-            curl_easy_setopt(curl, CURLOPT_TIMEOUT, 2L); 
+            curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
             curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
             
-
-            res = curl_easy_perform(curl);
-            
-            if (res != CURLE_OK) {
-                printf("DEBUG: curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
-                fflush(stdout);
-            } else {
-                printf("DEBUG: HTTP POST réussi vers %s\n", g_write_callback_url);
-                fflush(stdout);
-            }
+            curl_easy_perform(curl);
             
             curl_slist_free_all(headers);
             curl_easy_cleanup(curl);
-        } else {
-            printf("DEBUG: curl_easy_init() failed\n");
-            fflush(stdout);
         }
         
         free(json_payload);
     }
     
-    if (root) {
-        json_decref(root);
-    }
+    json_decref(root);
 }
 
 
@@ -326,7 +261,8 @@ static void log_external_write(
     BACNET_ADDRESS *src,
     BACNET_OBJECT_TYPE object_type,
     uint32_t object_instance,
-    BACNET_PROPERTY_ID property)
+    BACNET_PROPERTY_ID property,
+    BACNET_APPLICATION_DATA_VALUE *value)
 {
     FILE *fp;
     char timestamp[64];
@@ -376,7 +312,7 @@ static void log_external_write(
     }
     
 
-    notify_write_callback(src, object_type, object_instance, property);
+    notify_write_callback(src, object_type, object_instance, property, value);
 }
 
 /* Handler personnalisé pour WriteProperty (pas de sauvegarde auto) */
@@ -387,17 +323,24 @@ void my_handler_write_property(
     BACNET_CONFIRMED_SERVICE_DATA *service_data)
 {
     BACNET_WRITE_PROPERTY_DATA wp_data;
+    BACNET_APPLICATION_DATA_VALUE value;
     int len;
+    int value_len;
     
 
     len = wp_decode_service_request(service_request, service_len, &wp_data);
     
     if (len > 0) {
+        value_len = bacapp_decode_application_data(
+            wp_data.application_data, 
+            wp_data.application_data_len, 
+            &value);
 
         log_external_write(src, 
                           wp_data.object_type,
                           wp_data.object_instance,
-                          wp_data.object_property);
+                          wp_data.object_property,
+                          (value_len > 0) ? &value : NULL);
     }
     
 
