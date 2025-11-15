@@ -57,6 +57,9 @@
 #include "bacnet/basic/sys/mstimer.h"
 #include "bacnet/basic/tsm/tsm.h"
 
+/* Variables globales */
+static char g_write_callback_url[512] = {0};  /* URL du callback HTTP (vide = désactivé) */
+static json_t *g_config_root = NULL;          /* Configuration JSON (pour lookup objets) */
 
 
 static void Init_Schedules(void);
@@ -540,10 +543,6 @@ static char g_cmd_buf[8192];
 static size_t g_cmd_len = 0;
 static char g_pidfile[256] = {0};
 static char g_config_file[512] = {0};
-
-/* Callback HTTP pour notifications d'écritures externes */
-static char g_write_callback_url[512] = {0};  /* URL du callback (vide = désactivé) */
-static json_t *g_config_root = NULL;          /* Configuration JSON (pour lookup objets) */
 
 /* Signal handling */
 static volatile sig_atomic_t g_shutdown = 0;
