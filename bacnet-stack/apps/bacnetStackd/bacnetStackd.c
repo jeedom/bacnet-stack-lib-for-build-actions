@@ -1506,6 +1506,14 @@ static int apply_config_from_json(const char *json_text)
         return -1;
     }
 
+
+    if (g_config_root) {
+        json_decref(g_config_root);
+    }
+    g_config_root = json_deep_copy(root);
+    printf("DEBUG: g_config_root mis à jour pour callback\n");
+    fflush(stdout);
+
     /* MODIFICATION: Supprimer tous les objets existants avant d'appliquer la nouvelle configuration */
     delete_all_objects();
 
