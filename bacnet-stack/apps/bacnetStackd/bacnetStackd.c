@@ -333,6 +333,7 @@ static void log_external_write(
     char src_address[256];
     time_t now;
     struct tm *tm_info;
+    int i;
     
 
     time(&now);
@@ -351,7 +352,6 @@ static void log_external_write(
         } else {
 
             snprintf(src_address, sizeof(src_address), "MAC:");
-            int i;
             for (i = 0; i < src->len && i < 20; i++) {
                 char hex[4];
                 snprintf(hex, sizeof(hex), "%02X", src->adr[i]);
@@ -3285,43 +3285,55 @@ if (strcmp(cmd, "trendlog-data") == 0) {
 
     if (strcmp(cmd, "READ_PROP") == 0) {
         int obj_type, obj_instance, prop_id;
-        BACNET_APPLICATION_DATA_VALUE value;
+        uint8_t apdu_buf[MAX_APDU];
+        BACNET_READ_PROPERTY_DATA rpdata;
+        int apdu_len;
         char response[256];
-        bool status;
+        BACNET_APPLICATION_DATA_VALUE value;
+        int len;
+        uint8_t *apdu_ptr;
         
         if (sscanf(line, "READ_PROP %d %d %d", &obj_type, &obj_instance, &prop_id) == 3) {
-            status = Device_Read_Property_Local(
-                (BACNET_OBJECT_TYPE)obj_type,
-                obj_instance,
-                (BACNET_PROPERTY_ID)prop_id,
-                BACNET_ARRAY_ALL,
-                &value
-            );
+            rpdata.object_type = (BACNET_OBJECT_TYPE)obj_type;
+            rpdata.object_instance = obj_instance;
+            rpdata.object_property = (BACNET_PROPERTY_ID)prop_id;
+            rpdata.array_index = BACNET_ARRAY_ALL;
+            rpdata.application_data = apdu_buf;
+            rpdata.application_data_len = 0;
             
-            if (status) {
-                switch (value.tag) {
-                    case BACNET_APPLICATION_TAG_REAL:
-                        snprintf(response, sizeof(response), "OK %.2f\n", value.type.Real);
-                        break;
-                    case BACNET_APPLICATION_TAG_DOUBLE:
-                        snprintf(response, sizeof(response), "OK %.2f\n", value.type.Double);
-                        break;
-                    case BACNET_APPLICATION_TAG_UNSIGNED_INT:
-                        snprintf(response, sizeof(response), "OK %u\n", (unsigned)value.type.Unsigned_Int);
-                        break;
-                    case BACNET_APPLICATION_TAG_SIGNED_INT:
-                        snprintf(response, sizeof(response), "OK %d\n", value.type.Signed_Int);
-                        break;
-                    case BACNET_APPLICATION_TAG_BOOLEAN:
-                        snprintf(response, sizeof(response), "OK %d\n", value.type.Boolean ? 1 : 0);
-                        break;
-                    case BACNET_APPLICATION_TAG_ENUMERATED:
-                        snprintf(response, sizeof(response), "OK %u\n", (unsigned)value.type.Enumerated);
-                        break;
-                    default:
-                        snprintf(response, sizeof(response), "ERR unsupported type\n");
+            apdu_len = Device_Read_Property_Local(&rpdata);
+            
+            if (apdu_len > 0) {
+                apdu_ptr = rpdata.application_data;
+                len = bacapp_decode_application_data(apdu_ptr, (uint8_t)apdu_len, &value);
+                
+                if (len > 0) {
+                    switch (value.tag) {
+                        case BACNET_APPLICATION_TAG_REAL:
+                            snprintf(response, sizeof(response), "OK %.2f\n", value.type.Real);
+                            break;
+                        case BACNET_APPLICATION_TAG_DOUBLE:
+                            snprintf(response, sizeof(response), "OK %.2f\n", value.type.Double);
+                            break;
+                        case BACNET_APPLICATION_TAG_UNSIGNED_INT:
+                            snprintf(response, sizeof(response), "OK %u\n", (unsigned)value.type.Unsigned_Int);
+                            break;
+                        case BACNET_APPLICATION_TAG_SIGNED_INT:
+                            snprintf(response, sizeof(response), "OK %d\n", value.type.Signed_Int);
+                            break;
+                        case BACNET_APPLICATION_TAG_BOOLEAN:
+                            snprintf(response, sizeof(response), "OK %d\n", value.type.Boolean ? 1 : 0);
+                            break;
+                        case BACNET_APPLICATION_TAG_ENUMERATED:
+                            snprintf(response, sizeof(response), "OK %u\n", (unsigned)value.type.Enumerated);
+                            break;
+                        default:
+                            snprintf(response, sizeof(response), "ERR unsupported type\n");
+                    }
+                    write(g_client_fd, response, strlen(response));
+                } else {
+                    write(g_client_fd, "ERR decode failed\n", 18);
                 }
-                write(g_client_fd, response, strlen(response));
             } else {
                 write(g_client_fd, "ERR read failed\n", 16);
             }
