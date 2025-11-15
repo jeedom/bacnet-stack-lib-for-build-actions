@@ -68,7 +68,7 @@ INCLUDES := -I$(BACNET_SRC_DIR) -I$(PORTS_LINUX) -I$(PORTS_POSIX) \
 
 CFLAGS := $(CFLAGS_COMMON) $(INCLUDES) $(PFLAGS)
 LDFLAGS := -Wl,--gc-sections $(LFLAGS)
-LDLIBS := $(BACNET_LIB_TARGET) -ljansson
+LDLIBS := $(BACNET_LIB_TARGET) -ljansson -lcurl
 
 # Objects
 OBJS := $(SRC:.c=.o)

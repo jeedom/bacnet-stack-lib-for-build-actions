@@ -20,6 +20,7 @@
 #include <time.h>
 
 #include <jansson.h>
+#include <curl/curl.h>
 
 /* BACnet Stack includes */
 #include "bacnet/apdu.h"
@@ -143,6 +144,168 @@ static void print_timestamp_log(const char *message)
     fflush(stdout);
 }
 
+
+#define WRITE_LOG_FILE "/tmp/bacnet_writes.log"
+
+
+static void notify_write_callback(
+    BACNET_ADDRESS *src,
+    BACNET_OBJECT_TYPE object_type,
+    uint32_t object_instance,
+    BACNET_PROPERTY_ID property)
+{
+    char src_address[256];
+    char *json_payload = NULL;
+    json_t *root = NULL;
+    json_t *obj_json = NULL;
+    int i;
+    
+    if (!g_write_callback_url[0]) {
+        return;
+    }
+    
+
+    if (src && src->len > 0) {
+        if (src->len == 6) {
+            snprintf(src_address, sizeof(src_address),
+                    "%u.%u.%u.%u:%u",
+                    src->adr[0], src->adr[1], src->adr[2], src->adr[3],
+                    (src->adr[4] << 8) | src->adr[5]);
+        } else {
+            strcpy(src_address, "MAC:unknown");
+        }
+    } else {
+        strcpy(src_address, "UNKNOWN");
+    }
+    
+
+    if (!g_config_root || !json_is_object(g_config_root)) {
+        return;
+    }
+    
+    json_t *objects = json_object_get(g_config_root, "objects");
+    if (!objects || !json_is_array(objects)) {
+        return;
+    }
+    
+
+    size_t index;
+    json_t *value;
+    json_array_foreach(objects, index, value) {
+        json_t *jtype = json_object_get(value, "type");
+        json_t *jinst = json_object_get(value, "instance");
+        
+        if (jtype && jinst &&
+            json_integer_value(jtype) == object_type &&
+            json_integer_value(jinst) == object_instance) {
+            obj_json = value;
+            break;
+        }
+    }
+    
+    if (!obj_json) {
+        return; 
+    }
+    
+
+    root = json_object();
+    json_object_set_new(root, "event", json_string("write"));
+    json_object_set_new(root, "source", json_string(src_address));
+    json_object_set_new(root, "object_type", json_integer(object_type));
+    json_object_set_new(root, "instance", json_integer(object_instance));
+    json_object_set_new(root, "property", json_integer(property));
+    
+
+    json_object_set(root, "object_data", obj_json);
+    
+    json_payload = json_dumps(root, JSON_COMPACT);
+    
+    if (json_payload) {
+
+        CURL *curl = curl_easy_init();
+        if (curl) {
+            struct curl_slist *headers = NULL;
+            headers = curl_slist_append(headers, "Content-Type: application/json");
+            
+            curl_easy_setopt(curl, CURLOPT_URL, g_write_callback_url);
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_payload);
+            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+            curl_easy_setopt(curl, CURLOPT_TIMEOUT, 2L); 
+            curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+            
+
+            curl_easy_perform(curl);
+            
+            curl_slist_free_all(headers);
+            curl_easy_cleanup(curl);
+        }
+        
+        free(json_payload);
+    }
+    
+    if (root) {
+        json_decref(root);
+    }
+}
+
+
+static void log_external_write(
+    BACNET_ADDRESS *src,
+    BACNET_OBJECT_TYPE object_type,
+    uint32_t object_instance,
+    BACNET_PROPERTY_ID property)
+{
+    FILE *fp;
+    char timestamp[64];
+    char src_address[256];
+    time_t now;
+    struct tm *tm_info;
+    
+
+    time(&now);
+    tm_info = localtime(&now);
+    strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", tm_info);
+    
+ 
+    if (src && src->len > 0) {
+
+        if (src->len == 6) {
+
+            snprintf(src_address, sizeof(src_address),
+                    "%u.%u.%u.%u:%u",
+                    src->adr[0], src->adr[1], src->adr[2], src->adr[3],
+                    (src->adr[4] << 8) | src->adr[5]);
+        } else {
+
+            snprintf(src_address, sizeof(src_address), "MAC:");
+            int i;
+            for (i = 0; i < src->len && i < 20; i++) {
+                char hex[4];
+                snprintf(hex, sizeof(hex), "%02X", src->adr[i]);
+                strcat(src_address, hex);
+                if (i < src->len - 1) strcat(src_address, ":");
+            }
+        }
+    } else {
+        strcpy(src_address, "UNKNOWN");
+    }
+    
+
+    fp = fopen(WRITE_LOG_FILE, "a");
+    if (fp) {
+        fprintf(fp, "%s|%s|%u|%u|%u\n",
+                timestamp,
+                src_address,
+                (unsigned int)object_type,
+                object_instance,
+                (unsigned int)property);
+        fclose(fp);
+    }
+    
+
+    notify_write_callback(src, object_type, object_instance, property);
+}
+
 /* Handler personnalisé pour WriteProperty (pas de sauvegarde auto) */
 void my_handler_write_property(
     uint8_t *service_request,
@@ -150,7 +313,23 @@ void my_handler_write_property(
     BACNET_ADDRESS *src,
     BACNET_CONFIRMED_SERVICE_DATA *service_data)
 {
+    BACNET_WRITE_PROPERTY_DATA wp_data;
+    int len;
+    
+
+    len = wp_decode_service_request(service_request, service_len, &wp_data);
+    
+    if (len > 0) {
+
+        log_external_write(src, 
+                          wp_data.object_type,
+                          wp_data.object_instance,
+                          wp_data.object_property);
+    }
+    
+
     handler_write_property(service_request, service_len, src, service_data);
+    
     /* Sauvegarde désactivée : utiliser la commande SAVE_CONFIG pour sauvegarder */
     /* save_current_config(); */
 }
@@ -354,6 +533,9 @@ static char g_cmd_buf[8192];
 static size_t g_cmd_len = 0;
 static char g_pidfile[256] = {0};
 static char g_config_file[512] = {0};
+
+/* Callback HTTP pour notifications d'écritures externes */
+static char g_write_callback_url[512] = {0};  /* URL du callback (vide = désactivé) */
 
 /* Signal handling */
 static volatile sig_atomic_t g_shutdown = 0;
@@ -2953,6 +3135,68 @@ if (strcmp(cmd, "trendlog-data") == 0) {
         }
         return false;
     }
+    
+    /* Commande: GET_WRITES - Lire le log des écritures externes */
+    if (strcmp(cmd, "GET_WRITES") == 0) {
+        FILE *fp = fopen(WRITE_LOG_FILE, "r");
+        if (fp) {
+            char line_buf[512];
+            while (fgets(line_buf, sizeof(line_buf), fp)) {
+                write(g_client_fd, line_buf, strlen(line_buf));
+            }
+            fclose(fp);
+            write(g_client_fd, "OK\n", 3);
+        } else {
+            write(g_client_fd, "ERR no writes logged\n", 21);
+        }
+        return false;
+    }
+    
+    /* Commande: CLEAR_WRITES - Effacer le log des écritures */
+    if (strcmp(cmd, "CLEAR_WRITES") == 0) {
+        if (unlink(WRITE_LOG_FILE) == 0 || errno == ENOENT) {
+            write(g_client_fd, "OK cleared\n", 11);
+        } else {
+            write(g_client_fd, "ERR cannot clear\n", 17);
+        }
+        return false;
+    }
+    
+    /* Commande: SET_WRITE_CALLBACK [url] - Configurer l'URL du callback HTTP */
+    if (strcmp(cmd, "SET_WRITE_CALLBACK") == 0) {
+        char url[512] = {0};
+        
+        if (sscanf(line, "SET_WRITE_CALLBACK %511s", url) == 1) {
+            strncpy(g_write_callback_url, url, sizeof(g_write_callback_url) - 1);
+            
+            char response[600];
+            snprintf(response, sizeof(response), "OK callback set to %s\n", url);
+            write(g_client_fd, response, strlen(response));
+        } else {
+            write(g_client_fd, "Usage: SET_WRITE_CALLBACK <url>\n", 33);
+        }
+        return false;
+    }
+    
+    /* Commande: DISABLE_WRITE_CALLBACK - Désactiver le callback HTTP */
+    if (strcmp(cmd, "DISABLE_WRITE_CALLBACK") == 0) {
+        g_write_callback_url[0] = '\0';
+        write(g_client_fd, "OK callback disabled\n", 21);
+        return false;
+    }
+    
+    /* Commande: GET_WRITE_CALLBACK - Afficher l'URL du callback */
+    if (strcmp(cmd, "GET_WRITE_CALLBACK") == 0) {
+        char response[600];
+        if (g_write_callback_url[0]) {
+            snprintf(response, sizeof(response), "Callback: %s\n", g_write_callback_url);
+        } else {
+            snprintf(response, sizeof(response), "Callback: DISABLED\n");
+        }
+        write(g_client_fd, response, strlen(response));
+        return false;
+    }
+    
     (void)write(g_client_fd, "ERR unknown\n", 12);
     return 0;
 }
