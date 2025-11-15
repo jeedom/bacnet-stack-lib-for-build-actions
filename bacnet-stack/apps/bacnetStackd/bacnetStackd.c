@@ -348,7 +348,6 @@ static struct mstimer BACNET_Task_Timer;
 static struct mstimer Schedule_PV_Timer;
 static struct mstimer BACNET_TSM_Timer;
 static struct mstimer BACNET_Address_Timer;
-static struct mstimer Config_Save_Timer;
 
 /* Helper function to set object name */
 static bool set_object_name(BACNET_OBJECT_TYPE obj_type, uint32_t instance, const char *name)
@@ -3179,12 +3178,14 @@ if (strcmp(cmd, "trendlog-data") == 0) {
     
     /* Commande: SET_WRITE_CALLBACK [url] - Configurer l'URL du callback HTTP */
     if (strcmp(cmd, "SET_WRITE_CALLBACK") == 0) {
-        char url[512] = {0};
+        char url[512];
+        char response[600];
+        
+        url[0] = '\0';
         
         if (sscanf(line, "SET_WRITE_CALLBACK %511s", url) == 1) {
             strncpy(g_write_callback_url, url, sizeof(g_write_callback_url) - 1);
             
-            char response[600];
             snprintf(response, sizeof(response), "OK callback set to %s\n", url);
             write(g_client_fd, response, strlen(response));
         } else {
