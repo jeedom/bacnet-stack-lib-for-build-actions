@@ -155,10 +155,20 @@ static void notify_write_callback(
     BACNET_PROPERTY_ID property)
 {
     char src_address[256];
-    char *json_payload = NULL;
-    json_t *root = NULL;
-    json_t *obj_json = NULL;
-    int i;
+    char *json_payload;
+    json_t *root;
+    json_t *obj_json;
+    json_t *objects;
+    size_t index;
+    json_t *value;
+    json_t *jtype;
+    json_t *jinst;
+    CURL *curl;
+    struct curl_slist *headers;
+    
+    json_payload = NULL;
+    root = NULL;
+    obj_json = NULL;
     
     if (!g_write_callback_url[0]) {
         return;
@@ -183,17 +193,15 @@ static void notify_write_callback(
         return;
     }
     
-    json_t *objects = json_object_get(g_config_root, "objects");
+    objects = json_object_get(g_config_root, "objects");
     if (!objects || !json_is_array(objects)) {
         return;
     }
     
 
-    size_t index;
-    json_t *value;
     json_array_foreach(objects, index, value) {
-        json_t *jtype = json_object_get(value, "type");
-        json_t *jinst = json_object_get(value, "instance");
+        jtype = json_object_get(value, "type");
+        jinst = json_object_get(value, "instance");
         
         if (jtype && jinst &&
             json_integer_value(jtype) == object_type &&
@@ -222,9 +230,9 @@ static void notify_write_callback(
     
     if (json_payload) {
 
-        CURL *curl = curl_easy_init();
+        curl = curl_easy_init();
         if (curl) {
-            struct curl_slist *headers = NULL;
+            headers = NULL;
             headers = curl_slist_append(headers, "Content-Type: application/json");
             
             curl_easy_setopt(curl, CURLOPT_URL, g_write_callback_url);
@@ -536,6 +544,7 @@ static char g_config_file[512] = {0};
 
 /* Callback HTTP pour notifications d'écritures externes */
 static char g_write_callback_url[512] = {0};  /* URL du callback (vide = désactivé) */
+static json_t *g_config_root = NULL;          /* Configuration JSON (pour lookup objets) */
 
 /* Signal handling */
 static volatile sig_atomic_t g_shutdown = 0;
@@ -1431,6 +1440,12 @@ static int load_config_from_file(void)
     }
 
     printf("Loading configuration from %s...\n", g_config_file);
+    
+
+    if (g_config_root) {
+        json_decref(g_config_root);
+    }
+    g_config_root = json_deep_copy(root);  
     
     json_str = json_dumps(root, 0);
     if (!json_str) {
