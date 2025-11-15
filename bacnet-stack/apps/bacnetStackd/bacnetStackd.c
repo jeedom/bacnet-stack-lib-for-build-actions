@@ -62,6 +62,22 @@ static char g_write_callback_url[512] = {0};  /* URL du callback HTTP (vide = d√
 static json_t *g_config_root = NULL;          /* Configuration JSON (pour lookup objets) */
 
 
+static BACNET_OBJECT_TYPE string_to_object_type(const char *str) {
+    if (!str) return MAX_BACNET_OBJECT_TYPE;
+    if (strcmp(str, "analog-input") == 0) return OBJECT_ANALOG_INPUT;
+    if (strcmp(str, "analog-output") == 0) return OBJECT_ANALOG_OUTPUT;
+    if (strcmp(str, "analog-value") == 0) return OBJECT_ANALOG_VALUE;
+    if (strcmp(str, "binary-input") == 0) return OBJECT_BINARY_INPUT;
+    if (strcmp(str, "binary-output") == 0) return OBJECT_BINARY_OUTPUT;
+    if (strcmp(str, "binary-value") == 0) return OBJECT_BINARY_VALUE;
+    if (strcmp(str, "multi-state-input") == 0) return OBJECT_MULTI_STATE_INPUT;
+    if (strcmp(str, "multi-state-output") == 0) return OBJECT_MULTI_STATE_OUTPUT;
+    if (strcmp(str, "multi-state-value") == 0) return OBJECT_MULTI_STATE_VALUE;
+    if (strcmp(str, "schedule") == 0) return OBJECT_SCHEDULE;
+    if (strcmp(str, "trendlog") == 0) return OBJECT_TRENDLOG;
+    return MAX_BACNET_OBJECT_TYPE;
+}
+
 static void Init_Schedules(void);
 
 extern SCHEDULE_DESCR Schedule_Descr[MAX_SCHEDULES];
@@ -216,12 +232,26 @@ static void notify_write_callback(
     fflush(stdout);
 
     json_array_foreach(objects, index, value) {
+        BACNET_OBJECT_TYPE json_type;
+        uint32_t json_instance;
+        
         jtype = json_object_get(value, "type");
         jinst = json_object_get(value, "instance");
         
-        if (jtype && jinst &&
-            json_integer_value(jtype) == object_type &&
-            json_integer_value(jinst) == object_instance) {
+        if (!jtype || !jinst) continue;
+        
+
+        if (json_is_integer(jtype)) {
+            json_type = (BACNET_OBJECT_TYPE)json_integer_value(jtype);
+        } else if (json_is_string(jtype)) {
+            json_type = string_to_object_type(json_string_value(jtype));
+        } else {
+            continue;
+        }
+        
+        json_instance = (uint32_t)json_integer_value(jinst);
+        
+        if (json_type == object_type && json_instance == object_instance) {
             obj_json = value;
             break;
         }
