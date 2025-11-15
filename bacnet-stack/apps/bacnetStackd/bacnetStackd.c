@@ -180,17 +180,28 @@ static void notify_write_callback(
     CURL *curl;
     struct curl_slist *headers;
     char value_str[64];
+    int i;
     
     if (!g_write_callback_url[0]) {
         return;
     }
     
 
-    if (src && src->len == 6) {
-        snprintf(src_address, sizeof(src_address),
-                "%u.%u.%u.%u:%u",
-                src->adr[0], src->adr[1], src->adr[2], src->adr[3],
-                (src->adr[4] << 8) | src->adr[5]);
+    if (src && src->len > 0) {
+        if (src->len == 6) {
+            snprintf(src_address, sizeof(src_address),
+                    "%u.%u.%u.%u:%u",
+                    src->adr[0], src->adr[1], src->adr[2], src->adr[3],
+                    (src->adr[4] << 8) | src->adr[5]);
+        } else {
+            snprintf(src_address, sizeof(src_address), "MAC:");
+            for (i = 0; i < src->len && i < 20; i++) {
+                char hex[4];
+                snprintf(hex, sizeof(hex), "%02X", src->adr[i]);
+                strcat(src_address, hex);
+                if (i < src->len - 1) strcat(src_address, ":");
+            }
+        }
     } else {
         strcpy(src_address, "UNKNOWN");
     }
