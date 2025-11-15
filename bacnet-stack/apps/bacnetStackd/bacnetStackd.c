@@ -186,6 +186,13 @@ static void notify_write_callback(
         return;
     }
     
+    printf("DEBUG notify_write_callback: src=%p, src->len=%d\n", (void*)src, src ? src->len : -1);
+    if (src && src->len > 0) {
+        printf("DEBUG: src->adr[0-5] = %u.%u.%u.%u.%u.%u\n", 
+               src->adr[0], src->adr[1], src->adr[2], 
+               src->adr[3], src->adr[4], src->adr[5]);
+    }
+    fflush(stdout);
 
     if (src && src->len > 0) {
         if (src->len == 6) {
