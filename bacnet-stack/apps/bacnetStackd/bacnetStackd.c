@@ -415,10 +415,12 @@ static char *build_state_text_string(json_t *state_texts_array)
     const char *text;
     
     if (!state_texts_array || !json_is_array(state_texts_array)) {
+        printf("DEBUG build_state_text_string: not an array\n");
         return NULL;
     }
     
     count = json_array_size(state_texts_array);
+    printf("DEBUG build_state_text_string: %zu texts\n", count);
     if (count == 0) {
         return NULL;
     }
@@ -427,7 +429,9 @@ static char *build_state_text_string(json_t *state_texts_array)
     for (i = 0; i < count; i++) {
         json_t *item = json_array_get(state_texts_array, i);
         if (json_is_string(item)) {
-            total_len += strlen(json_string_value(item)) + 1;
+            text = json_string_value(item);
+            printf("DEBUG build_state_text_string: [%zu] = '%s'\n", i, text);
+            total_len += strlen(text) + 1;
         }
     }
     
@@ -451,6 +455,7 @@ static char *build_state_text_string(json_t *state_texts_array)
     }
     *ptr = '\0';
     
+    printf("DEBUG build_state_text_string: built string with total_len=%zu\n", total_len);
     return result;
 }
 
@@ -1834,13 +1839,21 @@ static int apply_config_from_json(const char *json_text)
             if (json_is_integer(jpv)) {
                 Multistate_Output_Present_Value_Set(inst, (uint32_t)json_integer_value(jpv), BACNET_MAX_PRIORITY);
             }
+            printf("DEBUG MSO: Looking for stateTexts in JSON...\n");
             state_texts = json_object_get(it, "stateTexts");
+            printf("DEBUG MSO: state_texts pointer = %p\n", (void*)state_texts);
             if (state_texts && json_is_array(state_texts)) {
+                printf("DEBUG MSO: Found stateTexts array, building string...\n");
                 state_text_string = build_state_text_string(state_texts);
                 if (state_text_string) {
+                    printf("DEBUG MSO: Calling Multistate_Output_State_Text_List_Set...\n");
                     Multistate_Output_State_Text_List_Set(inst, state_text_string);
                     printf("  Set %zu state texts for MSO %u\n", json_array_size(state_texts), inst);
+                } else {
+                    printf("DEBUG MSO: build_state_text_string returned NULL\n");
                 }
+            } else {
+                printf("DEBUG MSO: No stateTexts array found or not an array\n");
             }
             Multistate_Output_Out_Of_Service_Set(inst, true);
         }
