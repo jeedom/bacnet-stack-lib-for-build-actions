@@ -421,6 +421,56 @@ static bool set_object_name(BACNET_OBJECT_TYPE obj_type, uint32_t instance, cons
 }
 
 
+static char *build_state_text_string(json_t *state_texts_array)
+{
+    size_t count;
+    size_t i;
+    size_t total_len;
+    char *result;
+    char *ptr;
+    const char *text;
+    
+    if (!state_texts_array || !json_is_array(state_texts_array)) {
+        return NULL;
+    }
+    
+    count = json_array_size(state_texts_array);
+    if (count == 0) {
+        return NULL;
+    }
+    
+    total_len = 0;
+    for (i = 0; i < count; i++) {
+        json_t *item = json_array_get(state_texts_array, i);
+        if (json_is_string(item)) {
+            total_len += strlen(json_string_value(item)) + 1;
+        }
+    }
+    
+    if (total_len == 0) {
+        return NULL;
+    }
+    
+    result = (char *)malloc(total_len + 1);
+    if (!result) {
+        return NULL;
+    }
+    
+    ptr = result;
+    for (i = 0; i < count; i++) {
+        json_t *item = json_array_get(state_texts_array, i);
+        if (json_is_string(item)) {
+            text = json_string_value(item);
+            strcpy(ptr, text);
+            ptr += strlen(text) + 1;
+        }
+    }
+    *ptr = '\0';
+    
+    return result;
+}
+
+
 static bool create_trendlog(uint32_t instance, const char *name, 
                            BACNET_OBJECT_TYPE source_type, 
                            uint32_t source_instance,
@@ -1743,6 +1793,8 @@ static int apply_config_from_json(const char *json_text)
             Binary_Value_Out_Of_Service_Set(inst, true);
         }
         else if (strcmp(typ, "multi-state-input") == 0) {
+            json_t *state_texts;
+            char *state_text_string;
             bool exists = Multistate_Input_Valid_Instance(inst);
             if (!exists) {
                 uint32_t result = Multistate_Input_Create(inst);
@@ -1764,9 +1816,19 @@ static int apply_config_from_json(const char *json_text)
             if (json_is_integer(jpv)) {
                 Multistate_Input_Present_Value_Set(inst, (uint32_t)json_integer_value(jpv));
             }
+            state_texts = json_object_get(obj, "stateTexts");
+            if (state_texts && json_is_array(state_texts)) {
+                state_text_string = build_state_text_string(state_texts);
+                if (state_text_string) {
+                    Multistate_Input_State_Text_List_Set(inst, state_text_string);
+                    printf("  Set %zu state texts for MSI %u\n", json_array_size(state_texts), inst);
+                }
+            }
             Multistate_Input_Out_Of_Service_Set(inst, true);
         }
         else if (strcmp(typ, "multi-state-output") == 0) {
+            json_t *state_texts;
+            char *state_text_string;
             bool exists = Multistate_Output_Valid_Instance(inst);
             if (!exists) {
                 uint32_t result = Multistate_Output_Create(inst);
@@ -1788,9 +1850,19 @@ static int apply_config_from_json(const char *json_text)
             if (json_is_integer(jpv)) {
                 Multistate_Output_Present_Value_Set(inst, (uint32_t)json_integer_value(jpv), BACNET_MAX_PRIORITY);
             }
+            state_texts = json_object_get(obj, "stateTexts");
+            if (state_texts && json_is_array(state_texts)) {
+                state_text_string = build_state_text_string(state_texts);
+                if (state_text_string) {
+                    Multistate_Output_State_Text_List_Set(inst, state_text_string);
+                    printf("  Set %zu state texts for MSO %u\n", json_array_size(state_texts), inst);
+                }
+            }
             Multistate_Output_Out_Of_Service_Set(inst, true);
         }
         else if (strcmp(typ, "multi-state-value") == 0) {
+            json_t *state_texts;
+            char *state_text_string;
             bool exists = Multistate_Value_Valid_Instance(inst);
             if (!exists) {
                 uint32_t result = Multistate_Value_Create(inst);
@@ -1811,6 +1883,14 @@ static int apply_config_from_json(const char *json_text)
             }
             if (json_is_integer(jpv)) {
                 Multistate_Value_Present_Value_Set(inst, (uint32_t)json_integer_value(jpv));
+            }
+            state_texts = json_object_get(obj, "stateTexts");
+            if (state_texts && json_is_array(state_texts)) {
+                state_text_string = build_state_text_string(state_texts);
+                if (state_text_string) {
+                    Multistate_Value_State_Text_List_Set(inst, state_text_string);
+                    printf("  Set %zu state texts for MSV %u\n", json_array_size(state_texts), inst);
+                }
             }
             Multistate_Value_Out_Of_Service_Set(inst, true);
         }
