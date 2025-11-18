@@ -3124,6 +3124,46 @@ static int handle_socket_line(const char *line)
         }
         return 0;
     }
+    if (strncmp(line, "CFGJSON_FILE ", 13) == 0) {
+        const char *filepath = line + 13;
+        while (*filepath == ' ') filepath++;
+        if (*filepath == '\0') {
+            (void)write(g_client_fd, "ERR missing path\n", 17);
+            return 0;
+        }
+        FILE *fp = fopen(filepath, "r");
+        if (!fp) {
+            (void)write(g_client_fd, "ERR cannot open file\n", 21);
+            return 0;
+        }
+        fseek(fp, 0, SEEK_END);
+        long fsize = ftell(fp);
+        fseek(fp, 0, SEEK_SET);
+        if (fsize <= 0 || fsize > 20*1024*1024) { // Limite 20 Mo
+            fclose(fp);
+            (void)write(g_client_fd, "ERR file size\n", 14);
+            return 0;
+        }
+        char *json_buf = malloc(fsize + 1);
+        if (!json_buf) {
+            fclose(fp);
+            (void)write(g_client_fd, "ERR alloc\n", 10);
+            return 0;
+        }
+        size_t read_bytes = fread(json_buf, 1, fsize, fp);
+        fclose(fp);
+        if (read_bytes != fsize) {
+            free(json_buf);
+            (void)write(g_client_fd, "ERR read\n", 9);
+            return 0;
+        }
+        json_buf[fsize] = '\0';
+        int rc = apply_config_from_json(json_buf);
+        free(json_buf);
+        if (rc == 0) (void)write(g_client_fd, "OK\n", 3);
+        else         (void)write(g_client_fd, "ERR\n", 4);
+        return 0;
+    }
     if (strncmp(line, "CFGJSON ", 8) == 0) {
         const char *json = line + 8;
         int rc = apply_config_from_json(json);
