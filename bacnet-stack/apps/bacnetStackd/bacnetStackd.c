@@ -819,7 +819,7 @@ static object_functions_t My_Object_Table[] = {
 };
 
 /* Déclaration forward */
-static int apply_config_from_json(const char *json_text);
+static int apply_config_from_json(const char *json_text, bool full_reset);
 
 /* AJOUT: Fonction pour supprimer tous les objets d'un type donné */
 static void delete_all_objects_of_type(BACNET_OBJECT_TYPE obj_type)
@@ -1497,7 +1497,6 @@ static int load_config_from_file(void)
 
     printf("Loading configuration from %s...\n", g_config_file);
     
-
     if (g_config_root) {
         json_decref(g_config_root);
     }
@@ -1509,7 +1508,8 @@ static int load_config_from_file(void)
         return -1;
     }
     
-    result = apply_config_from_json(json_str);
+    /* ⭐ MODIFIÉ : true = full reset au démarrage */
+    result = apply_config_from_json(json_str, true);
     free(json_str);
     json_decref(root);
     
@@ -1520,7 +1520,7 @@ static int load_config_from_file(void)
     return result;
 }
 
-static int apply_config_from_json(const char *json_text)
+static int apply_config_from_json(const char *json_text, bool full_reset)
 {
     json_error_t jerr;
     json_t *root = json_loads(json_text, 0, &jerr);
@@ -1532,7 +1532,7 @@ static int apply_config_from_json(const char *json_text)
         return -1;
     }
 
-
+    /* Mise à jour de g_config_root pour le callback */
     if (g_config_root) {
         json_decref(g_config_root);
     }
@@ -1540,17 +1540,28 @@ static int apply_config_from_json(const char *json_text)
     printf("DEBUG: g_config_root mis à jour pour callback\n");
     fflush(stdout);
 
-    /* MODIFICATION: Supprimer tous les objets existants avant d'appliquer la nouvelle configuration */
-    delete_all_objects();
+    /* ⭐ MODIFICATION: Suppression conditionnelle */
+    if (full_reset) {
+        printf("=== FULL RESET: Deleting all existing objects ===\n");
+        delete_all_objects();
+    } else {
+        printf("=== HOT UPDATE: Preserving existing objects ===\n");
+    }
 
     /* Device */
     if (json_is_integer(json_object_get(root, "deviceId"))) {
-        Device_Set_Object_Instance_Number((uint32_t)json_integer_value(json_object_get(root, "deviceId")));
+        uint32_t new_id = (uint32_t)json_integer_value(json_object_get(root, "deviceId"));
+        if (new_id != Device_Object_Instance_Number()) {
+            Device_Set_Object_Instance_Number(new_id);
+            printf("Device ID updated: %u\n", new_id);
+        }
     }
+    
     if (json_is_string(json_object_get(root, "deviceName"))) {
         const char *dn = json_string_value(json_object_get(root, "deviceName"));
         if (dn) {
             Device_Object_Name_ANSI_Init(dn);
+            printf("Device Name updated: %s\n", dn);
         }
     }
 
@@ -1561,12 +1572,14 @@ static int apply_config_from_json(const char *json_text)
     }
 
     n = json_array_size(objs);
-    printf("Creating %u objects from JSON...\n", (unsigned int)n);
+    printf("%s %u objects from JSON...\n", 
+           full_reset ? "Creating" : "Updating/creating", 
+           (unsigned int)n);
     
     /* ========================================
-     * PHASE 1 : Créer TOUS les objets SAUF les Trendlogs
+     * PHASE 1 : Créer/Mettre à jour TOUS les objets SAUF les Trendlogs
      * ======================================== */
-    printf("=== Phase 1: Creating base objects ===\n");
+    printf("=== Phase 1: Processing base objects ===\n");
     
     for (i = 0; i < n; i++) {
         json_t *it = json_array_get(objs, i);
@@ -1578,7 +1591,7 @@ static int apply_config_from_json(const char *json_text)
 
         if (!json_is_object(it)) { continue; }
 
-        typ   = json_string_value(json_object_get(it, "type"));
+        typ = json_string_value(json_object_get(it, "type"));
         printf("DEBUG: Processing object %u/%u, type='%s'\n", (unsigned int)i+1, (unsigned int)n, typ ? typ : "NULL");
         
         /* SKIP les Trendlogs dans cette phase */
@@ -1588,123 +1601,88 @@ static int apply_config_from_json(const char *json_text)
         }
         
         jinst = json_object_get(it, "instance");
-        inst  = (uint32_t)json_integer_value(jinst);
-        name  = json_string_value(json_object_get(it, "name"));
-        jpv   = json_object_get(it, "presentValue");
+        inst = (uint32_t)json_integer_value(jinst);
+        name = json_string_value(json_object_get(it, "name"));
+        jpv = json_object_get(it, "presentValue");
 
         if (!typ || !json_is_integer(jinst)) {
             continue;
         }
 
-        /* ... TOUT LE CODE POUR AI, AO, AV, BI, BO, BV, MSI, MSO, MSV, SCHEDULE ... */
-        /* (Je ne recopie pas tout pour la lisibilité, gardez votre code existant) */
-        
-        if (strcmp(typ, "analog-input") == 0) {
-            bool exists = Analog_Input_Valid_Instance(inst);
-            if (!exists) {
-                uint32_t result = Analog_Input_Create(inst);
-                if (result != BACNET_MAX_INSTANCE) {
-                    printf("Created Analog Input %u\n", inst);
-                } else {
-                    printf("Failed to create Analog Input %u\n", inst);
-                    continue;
-                }
-            } else {
-                printf("Updating existing Analog Input %u\n", inst);
-            }
-            if (name) { 
-                char *name_copy = strdup(name);
-                if (name_copy) {
-                    set_object_name(OBJECT_ANALOG_INPUT, inst, name_copy);
-                }
-            }
-            if (json_is_number(jpv)) {
-                Analog_Input_Present_Value_Set(inst, (float)json_number_value(jpv));
-            }
-            Analog_Input_Out_Of_Service_Set(inst, true);
+        /* ========== ANALOG INPUT ========== */
+    if (strcmp(typ, "analog-input") == 0) {
+        bool exists = Analog_Input_Valid_Instance(inst);
+        if (!exists) {
+            Analog_Input_Create(inst);
+            printf("Created Analog Input %u\n", inst);
+        } else {
+            printf("Updating existing Analog Input %u\n", inst);
         }
-   if (strcmp(typ, "analog-input") == 0) {
-            bool exists = Analog_Input_Valid_Instance(inst);
-            if (!exists) {
-                uint32_t result = Analog_Input_Create(inst);
-                if (result != BACNET_MAX_INSTANCE) {
-                    printf("Created Analog Input %u\n", inst);
-                } else {
-                    printf("Failed to create Analog Input %u\n", inst);
-                    continue;
-                }
-            } else {
-                printf("Updating existing Analog Input %u\n", inst);
-            }
-            if (name) { 
-                char *name_copy = strdup(name);
-                if (name_copy) {
-                    set_object_name(OBJECT_ANALOG_INPUT, inst, name_copy);
-                }
-            }
-            /* Initialisation obligatoire de la valeur (défaut = 0.0 si absente) */
-            if (json_is_number(jpv)) {
-                Analog_Input_Present_Value_Set(inst, (float)json_number_value(jpv));
-                printf("Analog Input %u: Present_Value = %.2f\n", inst, (float)json_number_value(jpv));
-            } else {
-                Analog_Input_Present_Value_Set(inst, 0.0f);
-                printf("Analog Input %u: Present_Value = 0.0 (default)\n", inst);
-            }
-            Analog_Input_Out_Of_Service_Set(inst, true);
-        } 
-        else if (strcmp(typ, "analog-value") == 0) {
-            bool exists = Analog_Value_Valid_Instance(inst);
-            if (!exists) {
-                uint32_t result = Analog_Value_Create(inst);
-                if (result != BACNET_MAX_INSTANCE) {
-                    printf("Created Analog Value %u\n", inst);
-                } else {
-                    printf("Failed to create Analog Value %u\n", inst);
-                    continue;
-                }
-            } else {
-                printf("Updating existing Analog Value %u\n", inst);
-            }
-            if (name) { 
-                char *name_copy = strdup(name);
-                if (name_copy) {
-                    set_object_name(OBJECT_ANALOG_VALUE, inst, name_copy);
-                }
-            }
-            /* Initialisation obligatoire de la valeur (défaut = 0.0 si absente) */
-            if (json_is_number(jpv)) {
-                Analog_Value_Present_Value_Set(inst, (float)json_number_value(jpv), BACNET_MAX_PRIORITY);
-                printf("Analog Value %u: Present_Value = %.2f\n", inst, (float)json_number_value(jpv));
-            } else {
-                Analog_Value_Present_Value_Set(inst, 0.0f, BACNET_MAX_PRIORITY);
-                printf("Analog Value %u: Present_Value = 0.0 (default)\n", inst);
-            }
-            Analog_Value_Out_Of_Service_Set(inst, true);
-        } 
+        
+        if (name) set_object_name(OBJECT_ANALOG_INPUT, inst, name);
+        
+        if (json_is_number(jpv)) {
+            Analog_Input_Present_Value_Set(inst, (float)json_number_value(jpv));
+        } else {
+            Analog_Input_Present_Value_Set(inst, 0.0f);
+        }
+        
+        /* ⭐ Out_Of_Service configurable depuis JSON, défaut = true (simulé) */
+        json_t *j_oos = json_object_get(it, "outOfService");
+        bool oos = j_oos ? json_boolean_value(j_oos) : true;  // Défaut: true
+        Analog_Input_Out_Of_Service_Set(inst, oos);
+        printf("  Out_Of_Service = %s (simulated sensor)\n", oos ? "true" : "false");
+    }
+        
+        /* ========== ANALOG OUTPUT ========== */
         else if (strcmp(typ, "analog-output") == 0) {
             bool exists = Analog_Output_Valid_Instance(inst);
             if (!exists) {
-                uint32_t result = Analog_Output_Create(inst);
-                if (result != BACNET_MAX_INSTANCE) {
-                    printf("Created Analog Output %u\n", inst);
-                } else {
-                    printf("Failed to create Analog Output %u\n", inst);
-                    continue;
-                }
+                Analog_Output_Create(inst);
+                printf("Created Analog Output %u\n", inst);
             } else {
                 printf("Updating existing Analog Output %u\n", inst);
             }
-            if (name) { 
-                char *name_copy = strdup(name);
-                if (name_copy) {
-                    set_object_name(OBJECT_ANALOG_OUTPUT, inst, name_copy);
-                }
-            }
+            
+            if (name) set_object_name(OBJECT_ANALOG_OUTPUT, inst, name);
+            
             if (json_is_number(jpv)) {
                 Analog_Output_Present_Value_Set(inst, (float)json_number_value(jpv), BACNET_MAX_PRIORITY);
             }
-            Analog_Output_Out_Of_Service_Set(inst, true);
+            
+            /* ⭐ Out_Of_Service configurable depuis JSON, défaut = true (simulé) */
+            json_t *j_oos = json_object_get(it, "outOfService");
+            bool oos = j_oos ? json_boolean_value(j_oos) : true;  // Défaut: true
+            Analog_Output_Out_Of_Service_Set(inst, oos);
+            printf("  Out_Of_Service = %s (simulated actuator)\n", oos ? "true" : "false");
         }
+        
+        /* ========== ANALOG VALUE ========== */
+        else if (strcmp(typ, "analog-value") == 0) {
+            bool exists = Analog_Value_Valid_Instance(inst);
+            if (!exists) {
+                Analog_Value_Create(inst);
+                printf("Created Analog Value %u\n", inst);
+            } else {
+                printf("Updating existing Analog Value %u\n", inst);
+            }
+            
+            if (name) set_object_name(OBJECT_ANALOG_VALUE, inst, name);
+            
+            if (json_is_number(jpv)) {
+                Analog_Value_Present_Value_Set(inst, (float)json_number_value(jpv), BACNET_MAX_PRIORITY);
+            } else {
+                Analog_Value_Present_Value_Set(inst, 0.0f, BACNET_MAX_PRIORITY);
+            }
+            
+            /* ⭐ Out_Of_Service configurable depuis JSON, défaut = false */
+            json_t *j_oos = json_object_get(it, "outOfService");
+            bool oos = j_oos ? json_boolean_value(j_oos) : false;  // Défaut: false
+            Analog_Value_Out_Of_Service_Set(inst, oos);
+            printf("  Out_Of_Service = %s\n", oos ? "true" : "false");
+        }
+        
+        /* ========== BINARY INPUT ========== */
         else if (strcmp(typ, "binary-input") == 0) {
             bool exists = Binary_Input_Valid_Instance(inst);
             if (!exists) {
@@ -1729,6 +1707,8 @@ static int apply_config_from_json(const char *json_text)
             }
             Binary_Input_Out_Of_Service_Set(inst, true);
         }
+        
+        /* ========== BINARY OUTPUT ========== */
         else if (strcmp(typ, "binary-output") == 0) {
             bool exists = Binary_Output_Valid_Instance(inst);
             if (!exists) {
@@ -1753,6 +1733,8 @@ static int apply_config_from_json(const char *json_text)
             }
             Binary_Output_Out_Of_Service_Set(inst, true);
         }
+        
+        /* ========== BINARY VALUE ========== */
         else if (strcmp(typ, "binary-value") == 0) {
             bool exists = Binary_Value_Valid_Instance(inst);
             if (!exists) {
@@ -1777,6 +1759,8 @@ static int apply_config_from_json(const char *json_text)
             }
             Binary_Value_Out_Of_Service_Set(inst, true);
         }
+        
+        /* ========== MULTI-STATE INPUT ========== */
         else if (strcmp(typ, "multi-state-input") == 0) {
             json_t *state_texts;
             char *state_text_string;
@@ -1811,6 +1795,8 @@ static int apply_config_from_json(const char *json_text)
             }
             Multistate_Input_Out_Of_Service_Set(inst, true);
         }
+        
+        /* ========== MULTI-STATE OUTPUT ========== */
         else if (strcmp(typ, "multi-state-output") == 0) {
             json_t *state_texts;
             char *state_text_string;
@@ -1845,6 +1831,8 @@ static int apply_config_from_json(const char *json_text)
             }
             Multistate_Output_Out_Of_Service_Set(inst, true);
         }
+        
+        /* ========== MULTI-STATE VALUE ========== */
         else if (strcmp(typ, "multi-state-value") == 0) {
             json_t *state_texts;
             char *state_text_string;
@@ -1879,13 +1867,14 @@ static int apply_config_from_json(const char *json_text)
             }
             Multistate_Value_Out_Of_Service_Set(inst, true);
         }
+        
+        /* ========== SCHEDULE ========== */
         else if (strcmp(typ, "schedule") == 0) {
             bool exists;
             size_t day_idx;
             json_t *weekly_schedule;
             json_t *default_value;
             json_t *priority;
-            double val;
             
             exists = Schedule_Valid_Instance(inst);
             if (!exists) {
@@ -1947,7 +1936,6 @@ static int apply_config_from_json(const char *json_text)
                 if (apdu_len > 0 && wp_data.error_code == ERROR_CODE_SUCCESS) {
                     printf("  Default value set successfully\n");
                     
-
                     SCHEDULE_DESCR *desc = Schedule_Object(inst);
                     if (desc) {
                         memcpy(&desc->Present_Value, &app_value, sizeof(BACNET_APPLICATION_DATA_VALUE));
@@ -1995,8 +1983,6 @@ static int apply_config_from_json(const char *json_text)
                 }
             }
             
-            /* ======== MODIFICATION: weeklySchedule avec support BOOLEAN ======== */
-            /* Configuration du weekly schedule */
             weekly_schedule = json_object_get(it, "weeklySchedule");
             if (json_is_array(weekly_schedule)) {
                 size_t num_days = json_array_size(weekly_schedule);
@@ -2093,7 +2079,6 @@ static int apply_config_from_json(const char *json_text)
                         time_of_day.sec = (uint8_t)lt->tm_sec;
                         time_of_day.hundredths = 0;
                         
-
                         if (lt->tm_wday == 0) {
                             wday = (BACNET_WEEKDAY)7; 
                         } else {
@@ -2131,261 +2116,241 @@ static int apply_config_from_json(const char *json_text)
     printf("=== Phase 1 complete ===\n");
     
     /* ========================================
-     * PHASE 2 : Maintenant configurer les Trendlogs
+     * PHASE 2 : Configurer les Trendlogs UNIQUEMENT en mode full_reset
      * ======================================== */
-    printf("=== Phase 2: Configuring Trendlogs ===\n");
-    
-    for (i = 0; i < n; i++) {
-        json_t *it = json_array_get(objs, i);
-        const char *typ;
-        json_t *jinst;
-        uint32_t inst;
-        const char *name;
-
-        if (!json_is_object(it)) { continue; }
-
-        typ = json_string_value(json_object_get(it, "type"));
+    if (full_reset) {
+        printf("=== Phase 2: Configuring Trendlogs (full reset mode) ===\n");
         
-        /* TRAITER UNIQUEMENT les Trendlogs dans cette phase */
-        if (!typ || strcmp(typ, "trendlog") != 0) {
-            continue;
+        for (i = 0; i < n; i++) {
+            json_t *it = json_array_get(objs, i);
+            const char *typ;
+            json_t *jinst;
+            uint32_t inst;
+            const char *name;
+
+            if (!json_is_object(it)) { continue; }
+
+            typ = json_string_value(json_object_get(it, "type"));
+            
+            /* TRAITER UNIQUEMENT les Trendlogs dans cette phase */
+            if (!typ || strcmp(typ, "trendlog") != 0) {
+                continue;
+            }
+            
+            jinst = json_object_get(it, "instance");
+            inst = (uint32_t)json_integer_value(jinst);
+            name = json_string_value(json_object_get(it, "name"));
+
+            if (!json_is_integer(jinst)) {
+                continue;
+            }
+
+            /* Configuration Trendlog */
+            {
+                json_t *j_desc, *j_enable, *j_linked, *j_interval;
+                json_t *j_buffer, *j_trigger, *j_cov, *j_stop_full, *j_align;
+                
+                uint32_t tl_instance;
+                const char *tl_name;
+                const char *tl_desc;
+                bool tl_enable;
+                uint32_t log_interval;
+                uint32_t buffer_size;
+                const char *trigger_type;
+                BACNET_OBJECT_TYPE source_type;
+                uint32_t source_instance;
+                
+                source_type = OBJECT_ANALOG_VALUE;
+                source_instance = 0;
+                
+                tl_instance = inst;
+                tl_name = name;
+                
+                j_desc = json_object_get(it, "description");
+                j_enable = json_object_get(it, "enable");
+                
+                j_linked = json_object_get(it, "linkedObject");
+                if (!j_linked) {
+                    j_linked = json_object_get(it, "linked_object");
+                }
+
+                j_interval = json_object_get(it, "logInterval");
+                if (!j_interval) {
+                    j_interval = json_object_get(it, "log_interval");
+                }
+                
+                j_buffer = json_object_get(it, "bufferSize");
+                if (!j_buffer) {
+                    j_buffer = json_object_get(it, "buffer_size");
+                }
+                
+                j_trigger = json_object_get(it, "triggerType");
+                if (!j_trigger) {
+                    j_trigger = json_object_get(it, "trigger_type");
+                }
+                
+                j_cov = json_object_get(it, "cov_increment");
+                j_stop_full = json_object_get(it, "stop_when_full");
+                j_align = json_object_get(it, "align_intervals");
+                
+                tl_desc = j_desc ? json_string_value(j_desc) : "";
+                tl_enable = j_enable ? json_boolean_value(j_enable) : true;
+                log_interval = j_interval ? (uint32_t)json_integer_value(j_interval) : 300;
+                buffer_size = j_buffer ? (uint32_t)json_integer_value(j_buffer) : 100;
+                trigger_type = j_trigger ? json_string_value(j_trigger) : "periodic";
+                
+                (void)j_cov;
+                (void)j_stop_full;
+                (void)j_align;
+                
+                if (j_linked && json_is_object(j_linked)) {
+                    json_t *j_type = json_object_get(j_linked, "type");
+                    json_t *j_obj_inst = json_object_get(j_linked, "instance");
+                    
+                    if (j_type && json_is_string(j_type)) {
+                        const char *type_str = json_string_value(j_type);
+                        
+                        if (strcmp(type_str, "analog-input") == 0 || 
+                            strcmp(type_str, "ANALOG_INPUT") == 0) {
+                            source_type = OBJECT_ANALOG_INPUT;
+                        } else if (strcmp(type_str, "analog-output") == 0 || 
+                                   strcmp(type_str, "ANALOG_OUTPUT") == 0) {
+                            source_type = OBJECT_ANALOG_OUTPUT;
+                        } else if (strcmp(type_str, "analog-value") == 0 || 
+                                   strcmp(type_str, "ANALOG_VALUE") == 0) {
+                            source_type = OBJECT_ANALOG_VALUE;
+                        } else if (strcmp(type_str, "binary-input") == 0 || 
+                                   strcmp(type_str, "BINARY_INPUT") == 0) {
+                            source_type = OBJECT_BINARY_INPUT;
+                        } else if (strcmp(type_str, "binary-output") == 0 || 
+                                   strcmp(type_str, "BINARY_OUTPUT") == 0) {
+                            source_type = OBJECT_BINARY_OUTPUT;
+                        } else if (strcmp(type_str, "binary-value") == 0 || 
+                                   strcmp(type_str, "BINARY_VALUE") == 0) {
+                            source_type = OBJECT_BINARY_VALUE;
+                        } else if (strcmp(type_str, "multi-state-input") == 0 || 
+                                   strcmp(type_str, "MULTI_STATE_INPUT") == 0) {
+                            source_type = OBJECT_MULTI_STATE_INPUT;
+                        } else if (strcmp(type_str, "multi-state-output") == 0 || 
+                                   strcmp(type_str, "MULTI_STATE_OUTPUT") == 0) {
+                            source_type = OBJECT_MULTI_STATE_OUTPUT;
+                        } else if (strcmp(type_str, "multi-state-value") == 0 || 
+                                   strcmp(type_str, "MULTI_STATE_VALUE") == 0) {
+                            source_type = OBJECT_MULTI_STATE_VALUE;
+                        }
+                    }
+                    
+                    if (j_obj_inst) {
+                        source_instance = (uint32_t)json_integer_value(j_obj_inst);
+                    }
+                }
+                
+                printf("\n========================================\n");
+                printf("Trendlog %u: %s\n", tl_instance, tl_name ? tl_name : "(no name)");
+                printf("========================================\n");
+                printf("  Description: %s\n", tl_desc);
+                printf("  Source: %s[%u]\n", 
+                       bactext_object_type_name(source_type), source_instance);
+                printf("  Interval: %u seconds\n", log_interval);
+                printf("  Trigger: %s\n", trigger_type);
+                printf("  Enabled: %s\n", tl_enable ? "YES" : "NO");
+                
+                if (create_trendlog(tl_instance, tl_name, source_type, source_instance,
+                                   log_interval, buffer_size, tl_enable)) {
+                    printf("✓ Trendlog %u configured successfully\n", tl_instance);
+                } else {
+                    printf("✗ Failed to configure Trendlog %u\n", tl_instance);
+                }
+                printf("========================================\n");
+            }
         }
         
-        jinst = json_object_get(it, "instance");
-        inst  = (uint32_t)json_integer_value(jinst);
-        name  = json_string_value(json_object_get(it, "name"));
-
-        if (!json_is_integer(jinst)) {
-            continue;
-        }
-
-        /* VOTRE CODE TRENDLOG ICI (celui qui commence par "Déclarations des pointeurs JSON") */
+        printf("=== Phase 2 complete ===\n");
+        
+        /* Phase 3: Désactiver les trendlogs non configurés */
+        printf("=== Phase 3: Disabling unconfigured Trendlogs ===\n");
         {
-            /* Déclarations des pointeurs JSON */
-            json_t *j_desc, *j_enable, *j_linked, *j_interval;
-            json_t *j_buffer, *j_trigger, *j_cov, *j_stop_full, *j_align;
+            unsigned int idx;
+            int configured_count = 0;
+            int disabled_count = 0;
             
-            /* Déclarations des variables */
-            uint32_t tl_instance;
-            const char *tl_name;
-            const char *tl_desc;
-            bool tl_enable;
-            uint32_t log_interval;
-            uint32_t buffer_size;
-            const char *trigger_type;
-            BACNET_OBJECT_TYPE source_type;
-            uint32_t source_instance;
-            
-            /* Initialisation */
-            source_type = OBJECT_ANALOG_VALUE;
-            source_instance = 0;
-            
-            /* Récupérer instance et name (déjà extraits) */
-            tl_instance = inst;
-            tl_name = name;
-            
-            /* ... TOUT VOTRE CODE TRENDLOG EXISTANT ... */
-            /* (gardez exactement ce que vous avez) */
-            
-            /* Récupérer les autres champs du Trendlog */
-            j_desc = json_object_get(it, "description");
-            j_enable = json_object_get(it, "enable");
-            
-            /* Support "linkedObject" (camelCase) et "linked_object" (snake_case) */
-            j_linked = json_object_get(it, "linkedObject");
-            if (!j_linked) {
-                j_linked = json_object_get(it, "linked_object");
-            }
-
-                /* Support "logInterval" (camelCase) et "log_interval" (snake_case) */
-            j_interval = json_object_get(it, "logInterval");
-            if (!j_interval) {
-                j_interval = json_object_get(it, "log_interval");
-            }
-            
-            /* Support "bufferSize" (camelCase) et "buffer_size" (snake_case) */
-            j_buffer = json_object_get(it, "bufferSize");
-            if (!j_buffer) {
-                j_buffer = json_object_get(it, "buffer_size");
-            }
-            
-            /* Support "triggerType" (camelCase) et "trigger_type" (snake_case) */
-            j_trigger = json_object_get(it, "triggerType");
-            if (!j_trigger) {
-                j_trigger = json_object_get(it, "trigger_type");
-            }
-            
-            /* Propriétés non encore supportées */
-            j_cov = json_object_get(it, "cov_increment");
-            j_stop_full = json_object_get(it, "stop_when_full");
-            j_align = json_object_get(it, "align_intervals");
-            
-            /* Valeurs par défaut */
-            tl_desc = j_desc ? json_string_value(j_desc) : "";
-            tl_enable = j_enable ? json_boolean_value(j_enable) : true;
-            log_interval = j_interval ? (uint32_t)json_integer_value(j_interval) : 300;
-            buffer_size = j_buffer ? (uint32_t)json_integer_value(j_buffer) : 100;
-            trigger_type = j_trigger ? json_string_value(j_trigger) : "periodic";
-            
-            /* Éviter warnings pour variables non utilisées */
-            (void)j_cov;
-            (void)j_stop_full;
-            (void)j_align;
-            
-            /* Parser l'objet lié (linkedObject) */
-            if (j_linked && json_is_object(j_linked)) {
-                json_t *j_type = json_object_get(j_linked, "type");
-                json_t *j_obj_inst = json_object_get(j_linked, "instance");
-                
-                if (j_type && json_is_string(j_type)) {
-                    const char *type_str = json_string_value(j_type);
+            for (idx = 0; idx < MAX_TREND_LOGS; idx++) {
+                if (Trend_Log_Valid_Instance(idx) && TL_Is_Enabled(idx)) {
+                    bool source_valid = false;
+                    TL_LOG_INFO *log_info = Trend_Log_Get_Info(idx);
                     
-                    /* Support format avec tiret: "analog-input" ET "ANALOG_INPUT" */
-                    if (strcmp(type_str, "analog-input") == 0 || 
-                        strcmp(type_str, "ANALOG_INPUT") == 0) {
-                        source_type = OBJECT_ANALOG_INPUT;
-                    } else if (strcmp(type_str, "analog-output") == 0 || 
-                               strcmp(type_str, "ANALOG_OUTPUT") == 0) {
-                        source_type = OBJECT_ANALOG_OUTPUT;
-                    } else if (strcmp(type_str, "analog-value") == 0 || 
-                               strcmp(type_str, "ANALOG_VALUE") == 0) {
-                        source_type = OBJECT_ANALOG_VALUE;
-                    } else if (strcmp(type_str, "binary-input") == 0 || 
-                               strcmp(type_str, "BINARY_INPUT") == 0) {
-                        source_type = OBJECT_BINARY_INPUT;
-                    } else if (strcmp(type_str, "binary-output") == 0 || 
-                               strcmp(type_str, "BINARY_OUTPUT") == 0) {
-                        source_type = OBJECT_BINARY_OUTPUT;
-                    } else if (strcmp(type_str, "binary-value") == 0 || 
-                               strcmp(type_str, "BINARY_VALUE") == 0) {
-                        source_type = OBJECT_BINARY_VALUE;
-                    } else if (strcmp(type_str, "multi-state-input") == 0 || 
-                               strcmp(type_str, "MULTI_STATE_INPUT") == 0) {
-                        source_type = OBJECT_MULTI_STATE_INPUT;
-                    } else if (strcmp(type_str, "multi-state-output") == 0 || 
-                               strcmp(type_str, "MULTI_STATE_OUTPUT") == 0) {
-                        source_type = OBJECT_MULTI_STATE_OUTPUT;
-                    } else if (strcmp(type_str, "multi-state-value") == 0 || 
-                               strcmp(type_str, "MULTI_STATE_VALUE") == 0) {
-                        source_type = OBJECT_MULTI_STATE_VALUE;
+                    if (log_info != NULL) {
+                        BACNET_DEVICE_OBJECT_PROPERTY_REFERENCE *src = &log_info->Source;
+                        
+                        switch (src->objectIdentifier.type) {
+                            case OBJECT_ANALOG_INPUT:
+                                source_valid = Analog_Input_Valid_Instance(src->objectIdentifier.instance);
+                                break;
+                            case OBJECT_ANALOG_OUTPUT:
+                                source_valid = Analog_Output_Valid_Instance(src->objectIdentifier.instance);
+                                break;
+                            case OBJECT_ANALOG_VALUE:
+                                source_valid = Analog_Value_Valid_Instance(src->objectIdentifier.instance);
+                                break;
+                            case OBJECT_BINARY_INPUT:
+                                source_valid = Binary_Input_Valid_Instance(src->objectIdentifier.instance);
+                                break;
+                            case OBJECT_BINARY_OUTPUT:
+                                source_valid = Binary_Output_Valid_Instance(src->objectIdentifier.instance);
+                                break;
+                            case OBJECT_BINARY_VALUE:
+                                source_valid = Binary_Value_Valid_Instance(src->objectIdentifier.instance);
+                                break;
+                            default:
+                                source_valid = false;
+                                break;
+                        }
+                        
+                        if (source_valid) {
+                            configured_count++;
+                            printf("  TL[%u]: Enabled, source %s[%u] VALID\n", 
+                                   idx,
+                                   bactext_object_type_name(src->objectIdentifier.type),
+                                   src->objectIdentifier.instance);
+                        } else {
+                            BACNET_WRITE_PROPERTY_DATA wp_data;
+                            BACNET_APPLICATION_DATA_VALUE value;
+                            
+                            memset(&wp_data, 0, sizeof(wp_data));
+                            memset(&value, 0, sizeof(value));
+                            
+                            value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
+                            value.type.Boolean = false;
+                            
+                            int len = bacapp_encode_application_data(wp_data.application_data, &value);
+                            
+                            wp_data.object_type = OBJECT_TRENDLOG;
+                            wp_data.object_instance = idx;
+                            wp_data.object_property = PROP_ENABLE;
+                            wp_data.array_index = BACNET_ARRAY_ALL;
+                            wp_data.application_data_len = len;
+                            
+                            Trend_Log_Write_Property(&wp_data);
+                            disabled_count++;
+                            
+                            printf("  TL[%u]: DISABLED (invalid source %s[%u])\n", 
+                                   idx,
+                                   bactext_object_type_name(src->objectIdentifier.type),
+                                   src->objectIdentifier.instance);
+                        }
                     }
                 }
-                
-                if (j_obj_inst) {
-                    source_instance = (uint32_t)json_integer_value(j_obj_inst);
-                }
             }
             
-            /* Affichage et création */
-            printf("\n========================================\n");
-            printf("Trendlog %u: %s\n", tl_instance, tl_name ? tl_name : "(no name)");
-            printf("========================================\n");
-            printf("  Description: %s\n", tl_desc);
-            printf("  Source: %s[%u]\n", 
-                   bactext_object_type_name(source_type), source_instance);
-            printf("  Interval: %u seconds\n", log_interval);
-            printf("  Trigger: %s\n", trigger_type);
-            printf("  Enabled: %s\n", tl_enable ? "YES" : "NO");
-            
-            /* ... reste de votre code trendlog ... */
-            /* Créer et configurer le Trendlog */
-            if (create_trendlog(tl_instance, tl_name, source_type, source_instance,
-                               log_interval, buffer_size, tl_enable)) {
-                printf("✓ Trendlog %u configured successfully\n", tl_instance);
-            } else {
-                printf("✗ Failed to configure Trendlog %u\n", tl_instance);
-            }
-            printf("========================================\n");
+            printf("=== Phase 3 complete: %d configured, %d disabled ===\n", 
+                   configured_count, disabled_count);
         }
-    }
-    
-    printf("=== Phase 2 complete ===\n");
-    
-    /* ========================================
-     * Phase 3: Désactiver les trendlogs non configurés
-     * ======================================== */
-    printf("=== Phase 3: Disabling unconfigured Trendlogs ===\n");
-    {
-        unsigned int i;
-        int configured_count = 0;
-        int disabled_count = 0;
-        
-        for (i = 0; i < MAX_TREND_LOGS; i++) {
-            if (Trend_Log_Valid_Instance(i) && TL_Is_Enabled(i)) {
-
-                bool source_valid = false;
-                TL_LOG_INFO *log_info = Trend_Log_Get_Info(i);
-                
-                if (log_info != NULL) {
-                    BACNET_DEVICE_OBJECT_PROPERTY_REFERENCE *src = &log_info->Source;
-                    
-                    switch (src->objectIdentifier.type) {
-                        case OBJECT_ANALOG_INPUT:
-                            source_valid = Analog_Input_Valid_Instance(src->objectIdentifier.instance);
-                            break;
-                        case OBJECT_ANALOG_OUTPUT:
-                            source_valid = Analog_Output_Valid_Instance(src->objectIdentifier.instance);
-                            break;
-                        case OBJECT_ANALOG_VALUE:
-                            source_valid = Analog_Value_Valid_Instance(src->objectIdentifier.instance);
-                            break;
-                        case OBJECT_BINARY_INPUT:
-                            source_valid = Binary_Input_Valid_Instance(src->objectIdentifier.instance);
-                            break;
-                        case OBJECT_BINARY_OUTPUT:
-                            source_valid = Binary_Output_Valid_Instance(src->objectIdentifier.instance);
-                            break;
-                        case OBJECT_BINARY_VALUE:
-                            source_valid = Binary_Value_Valid_Instance(src->objectIdentifier.instance);
-                            break;
-                        default:
-                            source_valid = false;
-                            break;
-                    }
-                    
-                    if (source_valid) {
-                        configured_count++;
-                        printf("  TL[%u]: Enabled, source %s[%u] VALID\n", 
-                               i,
-                               bactext_object_type_name(src->objectIdentifier.type),
-                               src->objectIdentifier.instance);
-                    } else {
-
-                        BACNET_WRITE_PROPERTY_DATA wp_data;
-                        BACNET_APPLICATION_DATA_VALUE value;
-                        
-                        memset(&wp_data, 0, sizeof(wp_data));
-                        memset(&value, 0, sizeof(value));
-                        
-                        value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
-                        value.type.Boolean = false;
-                        
-                        int len = bacapp_encode_application_data(wp_data.application_data, &value);
-                        
-                        wp_data.object_type = OBJECT_TRENDLOG;
-                        wp_data.object_instance = i;
-                        wp_data.object_property = PROP_ENABLE;
-                        wp_data.array_index = BACNET_ARRAY_ALL;
-                        wp_data.application_data_len = len;
-                        
-                        Trend_Log_Write_Property(&wp_data);
-                        disabled_count++;
-                        
-                        printf("  TL[%u]: DISABLED (invalid source %s[%u])\n", 
-                               i,
-                               bactext_object_type_name(src->objectIdentifier.type),
-                               src->objectIdentifier.instance);
-                    }
-                }
-            }
-        }
-        
-        printf("=== Phase 3 complete: %d configured, %d disabled ===\n", 
-               configured_count, disabled_count);
+    } else {
+        printf("=== Skipping Trendlog reconfiguration (hot update mode) ===\n");
     }
     
     json_decref(root);
-    printf("Object creation complete.\n");
+    printf("Configuration %s complete.\n", full_reset ? "reset" : "update");
     printf("  AI: %u, AO: %u, AV: %u\n", 
            Analog_Input_Count(), Analog_Output_Count(), Analog_Value_Count());
     printf("  BI: %u, BO: %u, BV: %u\n", 
@@ -2395,16 +2360,17 @@ static int apply_config_from_json(const char *json_text)
     printf("  SCH: %u, TL: %u\n", Schedule_Count(), Trend_Log_Count()); 
     fflush(stdout);
     
-    /* Sauvegarde désactivée : utiliser la commande SAVE_CONFIG pour sauvegarder */
-    /* save_current_config(); */
-    
-    Send_I_Am(&Rx_Buf[0]);
-    printf("I-Am re-broadcasted after object creation\n");
+    /* I-Am uniquement en mode full_reset */
+    if (full_reset) {
+        Send_I_Am(&Rx_Buf[0]);
+        printf("I-Am re-broadcasted after full reset\n");
+    } else {
+        printf("Skipping I-Am broadcast (hot update)\n");
+    }
     fflush(stdout);
     
     return 0;
 }
-
 
 /* ===== Socket utilitaires ===== */
 static int socket_listen_local(int port)
@@ -3164,11 +3130,140 @@ static int handle_socket_line(const char *line)
         else         (void)write(g_client_fd, "ERR\n", 4);
         return 0;
     }
-    if (strncmp(line, "CFGJSON ", 8) == 0) {
-        const char *json = line + 8;
-        int rc = apply_config_from_json(json);
+        if (strncmp(line, "CFGJSON ", 8) == 0) {
+            const char *json = line + 8;
+            printf("=== HOT CONFIG UPDATE requested ===\n");
+            int rc = apply_config_from_json(json, false);  // ⭐ false = pas de reset
+            if (rc == 0) (void)write(g_client_fd, "OK\n", 3);
+            else         (void)write(g_client_fd, "ERR\n", 4);
+            return 0;
+        }
+
+        /* Commande: CFGJSON_RESET - Réinitialisation complète */
+    if (strncmp(line, "CFGJSON_RESET ", 14) == 0) {
+        const char *json = line + 14;
+        printf("=== FULL CONFIG RESET requested ===\n");
+        int rc = apply_config_from_json(json, true);  // ⭐ true = full reset
+        if (rc == 0) (void)write(g_client_fd, "OK RESET\n", 9);
+        else         (void)write(g_client_fd, "ERR\n", 4);
+        return 0;
+    }
+
+    /* Commande: CFGJSON_FILE - Mise à jour à chaud depuis fichier */
+    if (strncmp(line, "CFGJSON_FILE ", 13) == 0) {
+        const char *filepath = line + 13;
+        while (*filepath == ' ') filepath++;
+        if (*filepath == '\0') {
+            (void)write(g_client_fd, "ERR missing path\n", 17);
+            return 0;
+        }
+        FILE *fp = fopen(filepath, "r");
+        if (!fp) {
+            (void)write(g_client_fd, "ERR cannot open file\n", 21);
+            return 0;
+        }
+        fseek(fp, 0, SEEK_END);
+        long fsize = ftell(fp);
+        fseek(fp, 0, SEEK_SET);
+        if (fsize <= 0 || fsize > 20*1024*1024) {
+            fclose(fp);
+            (void)write(g_client_fd, "ERR file size\n", 14);
+            return 0;
+        }
+        char *json_buf = malloc(fsize + 1);
+        if (!json_buf) {
+            fclose(fp);
+            (void)write(g_client_fd, "ERR alloc\n", 10);
+            return 0;
+        }
+        size_t read_bytes = fread(json_buf, 1, fsize, fp);
+        fclose(fp);
+        if (read_bytes != (size_t)fsize) {
+            free(json_buf);
+            (void)write(g_client_fd, "ERR read\n", 9);
+            return 0;
+        }
+        json_buf[fsize] = '\0';
+        
+        printf("=== HOT CONFIG UPDATE from file requested ===\n");
+        int rc = apply_config_from_json(json_buf, false);  // ⭐ false = hot update
+        free(json_buf);
+        
         if (rc == 0) (void)write(g_client_fd, "OK\n", 3);
         else         (void)write(g_client_fd, "ERR\n", 4);
+        return 0;
+    }
+
+    /* Commande: CFGJSON_FILE_RESET - Réinitialisation complète depuis fichier */
+    if (strncmp(line, "CFGJSON_FILE_RESET ", 19) == 0) {
+        const char *filepath = line + 19;
+        while (*filepath == ' ') filepath++;
+        if (*filepath == '\0') {
+            (void)write(g_client_fd, "ERR missing path\n", 17);
+            return 0;
+        }
+        FILE *fp = fopen(filepath, "r");
+        if (!fp) {
+            (void)write(g_client_fd, "ERR cannot open file\n", 21);
+            return 0;
+        }
+        fseek(fp, 0, SEEK_END);
+        long fsize = ftell(fp);
+        fseek(fp, 0, SEEK_SET);
+        if (fsize <= 0 || fsize > 20*1024*1024) {
+            fclose(fp);
+            (void)write(g_client_fd, "ERR file size\n", 14);
+            return 0;
+        }
+        char *json_buf = malloc(fsize + 1);
+        if (!json_buf) {
+            fclose(fp);
+            (void)write(g_client_fd, "ERR alloc\n", 10);
+            return 0;
+        }
+        size_t read_bytes = fread(json_buf, 1, fsize, fp);
+        fclose(fp);
+        if (read_bytes != (size_t)fsize) {
+            free(json_buf);
+            (void)write(g_client_fd, "ERR read\n", 9);
+            return 0;
+        }
+        json_buf[fsize] = '\0';
+        
+        printf("=== FULL CONFIG RESET from file requested ===\n");
+        int rc = apply_config_from_json(json_buf, true);  // ⭐ true = full reset
+        free(json_buf);
+        
+        if (rc == 0) (void)write(g_client_fd, "OK RESET\n", 9);
+        else         (void)write(g_client_fd, "ERR\n", 4);
+        return 0;
+    }
+
+    /* Commande: WRITE_AV <instance> <value> [priority] - Test d'écriture Analog Value */
+    if (strcmp(cmd, "WRITE_AV") == 0) {
+        uint32_t instance = 0;
+        float value = 0.0f;
+        int priority = BACNET_MAX_PRIORITY;
+        
+        int n = sscanf(line, "WRITE_AV %u %f %d", &instance, &value, &priority);
+        if (n >= 2) {
+            if (Analog_Value_Valid_Instance(instance)) {
+                bool success = Analog_Value_Present_Value_Set(instance, value, priority);
+                if (success) {
+                    char response[128];
+                    snprintf(response, sizeof(response), 
+                            "OK: AV[%u] = %.2f @ priority %d\n", 
+                            instance, value, priority);
+                    write(g_client_fd, response, strlen(response));
+                } else {
+                    write(g_client_fd, "ERR: Failed to write\n", 21);
+                }
+            } else {
+                write(g_client_fd, "ERR: Invalid instance\n", 22);
+            }
+        } else {
+            write(g_client_fd, "Usage: WRITE_AV <instance> <value> [priority]\n", 47);
+        }
         return 0;
     }
     if (strncmp(line, "SAVE_CONFIG", 11) == 0) {
