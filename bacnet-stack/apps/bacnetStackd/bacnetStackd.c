@@ -61,45 +61,7 @@
 static char g_write_callback_url[512] = {0};
 static json_t *g_config_root = NULL;
 
-/* Variables globales pour l'horloge système */
-static BACNET_DATE Local_Date = {0};
-static BACNET_TIME Local_Time = {0};
 
-/**
- * @brief Met à jour l'horloge système BACnet avec l'heure actuelle du système
- */
-void Update_Current_Time(void)
-{
-    time_t current_time;
-    struct tm *time_info;
-    
-    current_time = time(NULL);
-    time_info = localtime(&current_time);
-    
-    if (time_info) {
-        Local_Date.year = time_info->tm_year + 1900;
-        Local_Date.month = time_info->tm_mon + 1;
-        Local_Date.day = time_info->tm_mday;
-        Local_Date.wday = (time_info->tm_wday == 0) ? 7 : time_info->tm_wday;
-        
-        Local_Time.hour = time_info->tm_hour;
-        Local_Time.min = time_info->tm_min;
-        Local_Time.sec = time_info->tm_sec;
-        Local_Time.hundredths = 0;
-    }
-}
-
-/**
- * @brief Retourne la date/heure actuelle BACnet
- */
-void Device_getCurrentDateTime(BACNET_DATE_TIME *DateTime)
-{
-    if (DateTime) {
-        Update_Current_Time();
-        DateTime->date = Local_Date;
-        DateTime->time = Local_Time;
-    }
-}
 
 static void Init_Schedules(void);
 
@@ -3505,8 +3467,7 @@ int main(int argc, char *argv[])
     Init_Service_Handlers();
     atexit(datalink_cleanup);
 
-    Update_Current_Time();
-    printf("System time initialized\n");
+
 
     Device_Object_Name_ANSI_Init(device_name);
     snprintf(buf, sizeof(buf), "Device Name: %s", device_name);
@@ -3543,7 +3504,6 @@ int main(int argc, char *argv[])
 
         if (mstimer_expired(&BACNET_Task_Timer)) {
             mstimer_reset(&BACNET_Task_Timer);
-            Update_Current_Time();
         }
         if (mstimer_expired(&BACNET_TSM_Timer)) {
             mstimer_reset(&BACNET_TSM_Timer);
