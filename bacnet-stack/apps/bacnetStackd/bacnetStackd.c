@@ -2334,6 +2334,11 @@ static int handle_cmd_trendlogs(void)
         json_object_set_new(root, "count", json_integer(0));
         
         char *json_str = json_dumps(root, JSON_INDENT(2));
+          if (g_client_fd >= 0) {
+            write(g_client_fd, json_str, strlen(json_str));
+            write(g_client_fd, "\n", 1);
+        }
+        
         printf("\n%s\n", json_str);
         free(json_str);
         json_decref(root);
@@ -2439,6 +2444,10 @@ static int handle_cmd_trendlogs(void)
     json_object_set_new(root, "count", json_integer(count));
     
     char *json_str = json_dumps(root, JSON_INDENT(2));
+      if (g_client_fd >= 0) {
+        write(g_client_fd, json_str, strlen(json_str));
+        write(g_client_fd, "\n", 1);
+    }
     printf("\n%s\n", json_str);
     free(json_str);
     json_decref(root);
@@ -2479,6 +2488,12 @@ static int handle_cmd_trendlog(uint32_t instance)
         json_object_set_new(root, "error", json_string("Invalid instance"));
         
         json_str = json_dumps(root, JSON_INDENT(2));
+
+          if (g_client_fd >= 0) {
+            write(g_client_fd, json_str, strlen(json_str));
+            write(g_client_fd, "\n", 1);
+        }
+
         printf("%s\n", json_str);
         free(json_str);
         json_decref(root);
@@ -2585,6 +2600,11 @@ static int handle_cmd_trendlog(uint32_t instance)
     }
     
     json_str = json_dumps(root, JSON_INDENT(2));
+      if (g_client_fd >= 0) {
+        write(g_client_fd, json_str, strlen(json_str));
+        write(g_client_fd, "\n", 1);
+    }
+    
     printf("\n%s\n", json_str);
     free(json_str);
     json_decref(root);
@@ -2825,8 +2845,13 @@ static int handle_cmd_trendlog_enable(uint32_t instance, bool enable)
     }
     
     json_str = json_dumps(root, JSON_INDENT(2));
+    if (g_client_fd >= 0) {
+    write(g_client_fd, json_str, strlen(json_str));
+    write(g_client_fd, "\n", 1);
+}
     printf("\n%s\n", json_str);
     free(json_str);
+
     json_decref(root);
     
     return 0;
@@ -2881,6 +2906,10 @@ static int handle_cmd_trendlog_clear(uint32_t instance)
     }
     
     json_str = json_dumps(root, JSON_INDENT(2));
+    if (g_client_fd >= 0) {
+    write(g_client_fd, json_str, strlen(json_str));
+    write(g_client_fd, "\n", 1);
+}
     printf("\n%s\n", json_str);
     free(json_str);
     json_decref(root);
