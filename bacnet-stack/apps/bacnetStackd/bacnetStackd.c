@@ -1514,11 +1514,19 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
 
         if (strcmp(typ, "analog-input") == 0) {
             bool exists = Analog_Input_Valid_Instance(inst);
+            char *name_copy = NULL; 
             if (!exists) {
                 Analog_Input_Create(inst);
                 printf("Created Analog Input %u\n", inst);
             } else {
                 printf("Updating existing Analog Input %u\n", inst);
+            }
+            if (name) {  
+                name_copy = strdup(name);
+                if (name_copy) {
+                    set_object_name(OBJECT_ANALOG_INPUT, inst, name_copy);
+                    free(name_copy); 
+                }
             }
             
             if (name) set_object_name(OBJECT_ANALOG_INPUT, inst, name);
@@ -1538,6 +1546,7 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
         }
         else if (strcmp(typ, "analog-output") == 0) {
             bool exists = Analog_Output_Valid_Instance(inst);
+            char *name_copy = NULL; 
             if (!exists) {
                 Analog_Output_Create(inst);
                 printf("Created Analog Output %u\n", inst);
@@ -1545,7 +1554,13 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
                 printf("Updating existing Analog Output %u\n", inst);
             }
             
-            if (name) set_object_name(OBJECT_ANALOG_OUTPUT, inst, name);
+            if (name) {  
+                name_copy = strdup(name);
+                if (name_copy) {
+                    set_object_name(OBJECT_ANALOG_OUTPUT, inst, name_copy);
+                    free(name_copy); 
+                }
+            }
             
             if (json_is_number(jpv)) {
                 Analog_Output_Present_Value_Set(inst, (float)json_number_value(jpv), BACNET_MAX_PRIORITY);
@@ -1558,6 +1573,7 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
         }
         else if (strcmp(typ, "analog-value") == 0) {
             bool exists = Analog_Value_Valid_Instance(inst);
+            char *name_copy = NULL; 
             if (!exists) {
                 Analog_Value_Create(inst);
                 printf("Created Analog Value %u\n", inst);
@@ -1565,7 +1581,13 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
                 printf("Updating existing Analog Value %u\n", inst);
             }
             
-            if (name) set_object_name(OBJECT_ANALOG_VALUE, inst, name);
+            if (name) {  
+                name_copy = strdup(name);
+                if (name_copy) {
+                    set_object_name(OBJECT_ANALOG_VALUE, inst, name_copy);
+                    free(name_copy); 
+                }
+            }
             
             if (json_is_number(jpv)) {
                 Analog_Value_Present_Value_Set(inst, (float)json_number_value(jpv), BACNET_MAX_PRIORITY);
