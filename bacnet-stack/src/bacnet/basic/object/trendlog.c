@@ -948,14 +948,20 @@ void TL_Local_Time_To_BAC(BACNET_DATE_TIME *bdatetime, bacnet_time_t seconds)
     time_info = gmtime(&raw_time);
     
     if (time_info) {
-        bdatetime->date.year = time_info->tm_year + 1900;
-        bdatetime->date.month = time_info->tm_mon + 1;
-        bdatetime->date.day = time_info->tm_mday;
-        bdatetime->date.wday = time_info->tm_wday + 1;
+        bdatetime->date.year = (uint16_t)time_info->tm_year;
         
-        bdatetime->time.hour = time_info->tm_hour;
-        bdatetime->time.min = time_info->tm_min;
-        bdatetime->time.sec = time_info->tm_sec;
+
+        bdatetime->date.month = (uint8_t)(time_info->tm_mon + 1);
+        
+        bdatetime->date.day = (uint8_t)time_info->tm_mday;
+        
+
+        bdatetime->date.wday = (time_info->tm_wday == 0) ? 
+            7 : (uint8_t)time_info->tm_wday;
+        
+        bdatetime->time.hour = (uint8_t)time_info->tm_hour;
+        bdatetime->time.min = (uint8_t)time_info->tm_min;
+        bdatetime->time.sec = (uint8_t)time_info->tm_sec;
         bdatetime->time.hundredths = 0;
     }
 }
