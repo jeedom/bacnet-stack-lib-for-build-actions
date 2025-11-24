@@ -1403,23 +1403,22 @@ static int load_config_from_file(void)
 
     printf("Loading configuration from %s...\n", g_config_file);
     
-    if (g_config_root) {
-        json_decref(g_config_root);
-    }
-    g_config_root = json_deep_copy(root);  
-    
+
     json_str = json_dumps(root, 0);
     if (!json_str) {
         json_decref(root);
         return -1;
     }
     
+
     result = apply_config_from_json(json_str, true);
+    
     free(json_str);
-    json_decref(root);
+    json_decref(root); 
     
     if (result == 0) {
         printf("Configuration loaded successfully\n");
+        printf("DEBUG: g_config_root is now at %p (should persist)\n", (void*)g_config_root);
     }
     
     return result;
@@ -3468,6 +3467,16 @@ static void clear_all_objects(void)
     printf("=== Initialization objects cleared ===\n");
 }
 
+
+static void cleanup_json_config(void)
+{
+    if (g_config_root) {
+        printf("DEBUG: Cleaning up g_config_root at %p\n", (void*)g_config_root);
+        json_decref(g_config_root);
+        g_config_root = NULL;
+    }
+}
+
 int main(int argc, char *argv[])
 {
     BACNET_ADDRESS src;
@@ -3613,6 +3622,8 @@ int main(int argc, char *argv[])
 
         process_socket_io();
     }
+
+    cleanup_json_config();
 
     printf("Shutting down...\n");
     socket_close_all();
