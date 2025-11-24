@@ -1529,7 +1529,7 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
                 }
             }
             
-            if (name) set_object_name(OBJECT_ANALOG_INPUT, inst, name);
+            
             
             if (json_is_number(jpv)) {
                 Analog_Input_Present_Value_Set(inst, (float)json_number_value(jpv));
@@ -1605,7 +1605,7 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
         else if (strcmp(typ, "binary-input") == 0) {
             bool exists;
             uint32_t result;
-            char *name_copy;
+            char *name_copy = NULL;
             exists = Binary_Input_Valid_Instance(inst);
             if (!exists) {
                 result = Binary_Input_Create(inst);
@@ -1622,6 +1622,7 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
                 name_copy = strdup(name);
                 if (name_copy) {
                     set_object_name(OBJECT_BINARY_INPUT, inst, name_copy);
+                    free(name_copy);
                 }
             }
             if (json_is_integer(jpv)) {
@@ -1632,7 +1633,7 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
         else if (strcmp(typ, "binary-output") == 0) {
             bool exists;
             uint32_t result;
-            char *name_copy;
+            char *name_copy = NULL;
             exists = Binary_Output_Valid_Instance(inst);
             if (!exists) {
                 result = Binary_Output_Create(inst);
@@ -1649,6 +1650,7 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
                 name_copy = strdup(name);
                 if (name_copy) {
                     set_object_name(OBJECT_BINARY_OUTPUT, inst, name_copy);
+                    free(name_copy);
                 }
             }
             if (json_is_integer(jpv)) {
@@ -1659,7 +1661,7 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
         else if (strcmp(typ, "binary-value") == 0) {
             bool exists;
             uint32_t result;
-            char *name_copy;
+            char *name_copy = NULL;
             exists = Binary_Value_Valid_Instance(inst);
             if (!exists) {
                 result = Binary_Value_Create(inst);
@@ -1676,6 +1678,7 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
                 name_copy = strdup(name);
                 if (name_copy) {
                     set_object_name(OBJECT_BINARY_VALUE, inst, name_copy);
+                    free(name_copy);
                 }
             }
             if (json_is_integer(jpv)) {
@@ -1688,7 +1691,7 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
             char *state_text_string;
             bool exists;
             uint32_t result;
-            char *name_copy;
+            char *name_copy = NULL;
             exists = Multistate_Input_Valid_Instance(inst);
             if (!exists) {
                 result = Multistate_Input_Create(inst);
@@ -1705,6 +1708,7 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
                 name_copy = strdup(name);
                 if (name_copy) {
                     set_object_name(OBJECT_MULTI_STATE_INPUT, inst, name_copy);
+                    free(name_copy);
                 }
             }
             if (json_is_integer(jpv)) {
@@ -1724,7 +1728,7 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
             char *state_text_string;
             bool exists;
             uint32_t result;
-            char *name_copy;
+            char *name_copy = NULL;
             exists = Multistate_Output_Valid_Instance(inst);
             if (!exists) {
                 result = Multistate_Output_Create(inst);
@@ -1741,6 +1745,7 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
                 name_copy = strdup(name);
                 if (name_copy) {
                     set_object_name(OBJECT_MULTI_STATE_OUTPUT, inst, name_copy);
+                    free(name_copy);
                 }
             }
             if (json_is_integer(jpv)) {
@@ -1760,7 +1765,7 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
             char *state_text_string;
             bool exists;
             uint32_t result;
-            char *name_copy;
+            char *name_copy = NULL;
             exists = Multistate_Value_Valid_Instance(inst);
             if (!exists) {
                 result = Multistate_Value_Create(inst);
@@ -1777,6 +1782,7 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
                 name_copy = strdup(name);
                 if (name_copy) {
                     set_object_name(OBJECT_MULTI_STATE_VALUE, inst, name_copy);
+                    free(name_copy);
                 }
             }
             if (json_is_integer(jpv)) {
@@ -1797,7 +1803,7 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
             json_t *weekly_schedule;
             json_t *default_value;
             json_t *priority;
-            char *name_copy;
+            char *name_copy = NULL;
             BACNET_APPLICATION_DATA_VALUE app_value;
             BACNET_WRITE_PROPERTY_DATA wp_data;
             uint8_t apdu[MAX_APDU];
@@ -1822,6 +1828,7 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
                 name_copy = strdup(name);
                 if (name_copy) {
                     set_object_name(OBJECT_SCHEDULE, inst, name_copy);
+                    free(name_copy);
                     printf("  Schedule name: '%s'\n", name);
                 }
             }
