@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdio.h>
+#include <time.h>
 #include "bacnet/basic/object/trendlog.h"
 #include "bacnet/basic/object/device.h"
 #include "bacnet/basic/object/ai.h"
