@@ -15,6 +15,8 @@
  */
 void clear_all_trendlogs(void);
 
+void Trendlog_Fix_Timestamps(void);
+
 /**
  * @brief Fonction stub pour supprimer un Trendlog spécifique
  * @param object_instance Instance du Trendlog

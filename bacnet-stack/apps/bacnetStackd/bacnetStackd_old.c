@@ -1403,23 +1403,22 @@ static int load_config_from_file(void)
 
     printf("Loading configuration from %s...\n", g_config_file);
     
-    if (g_config_root) {
-        json_decref(g_config_root);
-    }
-    g_config_root = json_deep_copy(root);  
-    
+
     json_str = json_dumps(root, 0);
     if (!json_str) {
         json_decref(root);
         return -1;
     }
     
+
     result = apply_config_from_json(json_str, true);
+    
     free(json_str);
-    json_decref(root);
+    json_decref(root); 
     
     if (result == 0) {
         printf("Configuration loaded successfully\n");
+        printf("DEBUG: g_config_root is now at %p (should persist)\n", (void*)g_config_root);
     }
     
     return result;
@@ -1514,22 +1513,21 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
 
         if (strcmp(typ, "analog-input") == 0) {
             bool exists = Analog_Input_Valid_Instance(inst);
-            char *name_copy = NULL; 
+
             if (!exists) {
                 Analog_Input_Create(inst);
                 printf("Created Analog Input %u\n", inst);
             } else {
                 printf("Updating existing Analog Input %u\n", inst);
             }
-            if (name) {  
-                name_copy = strdup(name);
-                if (name_copy) {
-                    set_object_name(OBJECT_ANALOG_INPUT, inst, name_copy);
-                    free(name_copy); 
-                }
+         if (name && name[0] != '\0') {
+            char *permanent_name = strdup(name);
+            if (permanent_name) {
+                set_object_name(OBJECT_ANALOG_INPUT, inst, permanent_name);
+                printf("  Name set: '%s' (permanent ptr: %p)\n", permanent_name, (void*)permanent_name);
             }
+        }
             
-            if (name) set_object_name(OBJECT_ANALOG_INPUT, inst, name);
             
             if (json_is_number(jpv)) {
                 Analog_Input_Present_Value_Set(inst, (float)json_number_value(jpv));
@@ -1546,7 +1544,6 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
         }
         else if (strcmp(typ, "analog-output") == 0) {
             bool exists = Analog_Output_Valid_Instance(inst);
-            char *name_copy = NULL; 
             if (!exists) {
                 Analog_Output_Create(inst);
                 printf("Created Analog Output %u\n", inst);
@@ -1554,13 +1551,13 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
                 printf("Updating existing Analog Output %u\n", inst);
             }
             
-            if (name) {  
-                name_copy = strdup(name);
-                if (name_copy) {
-                    set_object_name(OBJECT_ANALOG_OUTPUT, inst, name_copy);
-                    free(name_copy); 
-                }
+         if (name && name[0] != '\0') {
+            char *permanent_name = strdup(name);
+            if (permanent_name) {
+                set_object_name(OBJECT_ANALOG_OUTPUT, inst, permanent_name);
+                printf("  Name set: '%s' (permanent ptr: %p)\n", permanent_name, (void*)permanent_name);
             }
+        }
             
             if (json_is_number(jpv)) {
                 Analog_Output_Present_Value_Set(inst, (float)json_number_value(jpv), BACNET_MAX_PRIORITY);
@@ -1573,7 +1570,6 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
         }
         else if (strcmp(typ, "analog-value") == 0) {
             bool exists = Analog_Value_Valid_Instance(inst);
-            char *name_copy = NULL; 
             if (!exists) {
                 Analog_Value_Create(inst);
                 printf("Created Analog Value %u\n", inst);
@@ -1581,13 +1577,14 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
                 printf("Updating existing Analog Value %u\n", inst);
             }
             
-            if (name) {  
-                name_copy = strdup(name);
-                if (name_copy) {
-                    set_object_name(OBJECT_ANALOG_VALUE, inst, name_copy);
-                    free(name_copy); 
-                }
+         if (name && name[0] != '\0') {
+            char *permanent_name = strdup(name);
+            if (permanent_name) {
+                set_object_name(OBJECT_ANALOG_VALUE, inst, permanent_name);
+                printf("  Name set: '%s' (permanent ptr: %p)\n", permanent_name, (void*)permanent_name);
             }
+        }
+            
             
             if (json_is_number(jpv)) {
                 Analog_Value_Present_Value_Set(inst, (float)json_number_value(jpv), BACNET_MAX_PRIORITY);
@@ -1605,7 +1602,6 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
         else if (strcmp(typ, "binary-input") == 0) {
             bool exists;
             uint32_t result;
-            char *name_copy;
             exists = Binary_Input_Valid_Instance(inst);
             if (!exists) {
                 result = Binary_Input_Create(inst);
@@ -1618,12 +1614,14 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
             } else {
                 printf("Updating existing Binary Input %u\n", inst);
             }
-            if (name) { 
-                name_copy = strdup(name);
-                if (name_copy) {
-                    set_object_name(OBJECT_BINARY_INPUT, inst, name_copy);
-                }
+         if (name && name[0] != '\0') {
+            char *permanent_name = strdup(name);
+            if (permanent_name) {
+                set_object_name(OBJECT_BINARY_INPUT, inst, permanent_name);
+                printf("  Name set: '%s' (permanent ptr: %p)\n", permanent_name, (void*)permanent_name);
             }
+        }
+            
             if (json_is_integer(jpv)) {
                 Binary_Input_Present_Value_Set(inst, (BACNET_BINARY_PV)json_integer_value(jpv));
             }
@@ -1632,7 +1630,6 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
         else if (strcmp(typ, "binary-output") == 0) {
             bool exists;
             uint32_t result;
-            char *name_copy;
             exists = Binary_Output_Valid_Instance(inst);
             if (!exists) {
                 result = Binary_Output_Create(inst);
@@ -1645,12 +1642,14 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
             } else {
                 printf("Updating existing Binary Output %u\n", inst);
             }
-            if (name) { 
-                name_copy = strdup(name);
-                if (name_copy) {
-                    set_object_name(OBJECT_BINARY_OUTPUT, inst, name_copy);
-                }
+         if (name && name[0] != '\0') {
+            char *permanent_name = strdup(name);
+            if (permanent_name) {
+                set_object_name(OBJECT_BINARY_OUTPUT, inst, permanent_name);
+                printf("  Name set: '%s' (permanent ptr: %p)\n", permanent_name, (void*)permanent_name);
             }
+        }
+            
             if (json_is_integer(jpv)) {
                 Binary_Output_Present_Value_Set(inst, (BACNET_BINARY_PV)json_integer_value(jpv), BACNET_MAX_PRIORITY);
             }
@@ -1659,7 +1658,6 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
         else if (strcmp(typ, "binary-value") == 0) {
             bool exists;
             uint32_t result;
-            char *name_copy;
             exists = Binary_Value_Valid_Instance(inst);
             if (!exists) {
                 result = Binary_Value_Create(inst);
@@ -1672,12 +1670,14 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
             } else {
                 printf("Updating existing Binary Value %u\n", inst);
             }
-            if (name) { 
-                name_copy = strdup(name);
-                if (name_copy) {
-                    set_object_name(OBJECT_BINARY_VALUE, inst, name_copy);
-                }
+         if (name && name[0] != '\0') {
+            char *permanent_name = strdup(name);
+            if (permanent_name) {
+                set_object_name(OBJECT_BINARY_VALUE, inst, permanent_name);
+                printf("  Name set: '%s' (permanent ptr: %p)\n", permanent_name, (void*)permanent_name);
             }
+        }
+            
             if (json_is_integer(jpv)) {
                 Binary_Value_Present_Value_Set(inst, (BACNET_BINARY_PV)json_integer_value(jpv));
             }
@@ -1688,7 +1688,6 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
             char *state_text_string;
             bool exists;
             uint32_t result;
-            char *name_copy;
             exists = Multistate_Input_Valid_Instance(inst);
             if (!exists) {
                 result = Multistate_Input_Create(inst);
@@ -1701,12 +1700,14 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
             } else {
                 printf("Updating existing Multi-State Input %u\n", inst);
             }
-            if (name) { 
-                name_copy = strdup(name);
-                if (name_copy) {
-                    set_object_name(OBJECT_MULTI_STATE_INPUT, inst, name_copy);
-                }
+         if (name && name[0] != '\0') {
+            char *permanent_name = strdup(name);
+            if (permanent_name) {
+                set_object_name(OBJECT_MULTI_STATE_INPUT, inst, permanent_name);
+                printf("  Name set: '%s' (permanent ptr: %p)\n", permanent_name, (void*)permanent_name);
             }
+        }
+            
             if (json_is_integer(jpv)) {
                 Multistate_Input_Present_Value_Set(inst, (uint32_t)json_integer_value(jpv));
             }
@@ -1724,7 +1725,6 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
             char *state_text_string;
             bool exists;
             uint32_t result;
-            char *name_copy;
             exists = Multistate_Output_Valid_Instance(inst);
             if (!exists) {
                 result = Multistate_Output_Create(inst);
@@ -1737,12 +1737,14 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
             } else {
                 printf("Updating existing Multi-State Output %u\n", inst);
             }
-            if (name) { 
-                name_copy = strdup(name);
-                if (name_copy) {
-                    set_object_name(OBJECT_MULTI_STATE_OUTPUT, inst, name_copy);
-                }
+         if (name && name[0] != '\0') {
+            char *permanent_name = strdup(name);
+            if (permanent_name) {
+                set_object_name(OBJECT_MULTI_STATE_OUTPUT, inst, permanent_name);
+                printf("  Name set: '%s' (permanent ptr: %p)\n", permanent_name, (void*)permanent_name);
             }
+        }
+            
             if (json_is_integer(jpv)) {
                 Multistate_Output_Present_Value_Set(inst, (uint32_t)json_integer_value(jpv), BACNET_MAX_PRIORITY);
             }
@@ -1760,7 +1762,6 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
             char *state_text_string;
             bool exists;
             uint32_t result;
-            char *name_copy;
             exists = Multistate_Value_Valid_Instance(inst);
             if (!exists) {
                 result = Multistate_Value_Create(inst);
@@ -1773,12 +1774,14 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
             } else {
                 printf("Updating existing Multi-State Value %u\n", inst);
             }
-            if (name) { 
-                name_copy = strdup(name);
-                if (name_copy) {
-                    set_object_name(OBJECT_MULTI_STATE_VALUE, inst, name_copy);
-                }
+         if (name && name[0] != '\0') {
+            char *permanent_name = strdup(name);
+            if (permanent_name) {
+                set_object_name(OBJECT_MULTI_STATE_VALUE, inst, permanent_name);
+                printf("  Name set: '%s' (permanent ptr: %p)\n", permanent_name, (void*)permanent_name);
             }
+        }
+            
             if (json_is_integer(jpv)) {
                 Multistate_Value_Present_Value_Set(inst, (uint32_t)json_integer_value(jpv));
             }
@@ -1797,7 +1800,6 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
             json_t *weekly_schedule;
             json_t *default_value;
             json_t *priority;
-            char *name_copy;
             BACNET_APPLICATION_DATA_VALUE app_value;
             BACNET_WRITE_PROPERTY_DATA wp_data;
             uint8_t apdu[MAX_APDU];
@@ -1818,13 +1820,14 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
             
             printf("Configuring Schedule %u\n", inst);
             
-            if (name) {
-                name_copy = strdup(name);
-                if (name_copy) {
-                    set_object_name(OBJECT_SCHEDULE, inst, name_copy);
-                    printf("  Schedule name: '%s'\n", name);
-                }
+         if (name && name[0] != '\0') {
+            char *permanent_name = strdup(name);
+            if (permanent_name) {
+                set_object_name(OBJECT_SCHEDULE, inst, permanent_name);
+                printf("  Name set: '%s' (permanent ptr: %p)\n", permanent_name, (void*)permanent_name);
             }
+        }
+            
             
             default_value = json_object_get(it, "defaultValue");
             if (default_value && !json_is_null(default_value)) {
@@ -3461,6 +3464,16 @@ static void clear_all_objects(void)
     printf("=== Initialization objects cleared ===\n");
 }
 
+
+static void cleanup_json_config(void)
+{
+    if (g_config_root) {
+        printf("DEBUG: Cleaning up g_config_root at %p\n", (void*)g_config_root);
+        json_decref(g_config_root);
+        g_config_root = NULL;
+    }
+}
+
 int main(int argc, char *argv[])
 {
     BACNET_ADDRESS src;
@@ -3606,6 +3619,8 @@ int main(int argc, char *argv[])
 
         process_socket_io();
     }
+
+    cleanup_json_config();
 
     printf("Shutting down...\n");
     socket_close_all();

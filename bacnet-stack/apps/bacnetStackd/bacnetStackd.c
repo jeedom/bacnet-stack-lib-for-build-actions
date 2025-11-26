@@ -510,6 +510,39 @@ static bool create_trendlog(uint32_t instance, const char *name,
         printf("  ✓ Enabled: %s\n", enable ? "YES" : "NO");
         printf("  ✓ Buffer cleared (ready for logging)\n");
         
+        /* ========== INITIALISATION DU TIMESTAMP ========== */
+        TL_LOG_INFO *log_info = Trend_Log_Get_Info(instance);
+        if (log_info) {
+            time_t now = time(NULL);
+            struct tm *lt = localtime(&now);
+            
+            /* Initialiser tLastDataTime */
+            log_info->tLastDataTime = now;
+            
+            /* Initialiser StartTime avec la date/heure actuelle */
+            log_info->StartTime.date.year = (uint16_t)(lt->tm_year + 1900);
+            log_info->StartTime.date.month = (uint8_t)(lt->tm_mon + 1);
+            log_info->StartTime.date.day = (uint8_t)lt->tm_mday;
+            log_info->StartTime.date.wday = (uint8_t)((lt->tm_wday == 0) ? 7 : lt->tm_wday);
+            
+            log_info->StartTime.time.hour = (uint8_t)lt->tm_hour;
+            log_info->StartTime.time.min = (uint8_t)lt->tm_min;
+            log_info->StartTime.time.sec = (uint8_t)lt->tm_sec;
+            log_info->StartTime.time.hundredths = 0;
+            
+            log_info->tStartTime = now;
+            log_info->ucTimeFlags &= ~TL_T_START_WILD;
+            
+            printf("  ✓ Timestamp initialized: %04d-%02d-%02d %02d:%02d:%02d\n",
+                   log_info->StartTime.date.year,
+                   log_info->StartTime.date.month,
+                   log_info->StartTime.date.day,
+                   log_info->StartTime.time.hour,
+                   log_info->StartTime.time.min,
+                   log_info->StartTime.time.sec);
+        }
+        /* ================================================= */
+        
         printf("\n  → Testing source read before enabling...\n");
         fflush(stdout);
         

@@ -136,6 +136,7 @@ static void clear_single_trendlog(uint32_t instance)
     Trend_Log_Write_Property(&wp_data);
 }
 
+
 /**
  * @brief Vide tous les Trendlogs
  */
@@ -205,4 +206,46 @@ bool Trendlog_Test_Source_Read(uint32_t instance)
     
     printf("✓ Trendlog %u: Source read test passed (%d bytes)\n", instance, len);
     return true;
+}
+
+/**
+ * @brief Force le recalcul des timestamps pour tous les trendlogs actifs
+ * À appeler périodiquement pour corriger les timestamps à 1900
+ */
+void Trendlog_Fix_Timestamps(void)
+{
+    uint32_t i;
+    time_t current_time;
+    struct tm *timeptr;
+    
+    current_time = time(NULL);
+    timeptr = localtime(&current_time);
+    
+    for (i = 0; i < MAX_TREND_LOGS; i++) {
+        if (Trend_Log_Valid_Instance(i) && TL_Is_Enabled(i)) {
+            TL_LOG_INFO *log_info = Trend_Log_Get_Info(i);
+            
+            if (log_info != NULL) {
+                /* Mettre à jour tLastDataTime avec le timestamp actuel */
+                log_info->tLastDataTime = current_time;
+                
+                /* Si ucTimeFlags indique que les dates sont wildcard, les corriger */
+                if (log_info->ucTimeFlags & (TL_T_START_WILD | TL_T_STOP_WILD)) {
+                    /* Définir StartTime à maintenant */
+                    log_info->StartTime.date.year = (uint16_t)(timeptr->tm_year + 1900);
+                    log_info->StartTime.date.month = (uint8_t)(timeptr->tm_mon + 1);
+                    log_info->StartTime.date.day = (uint8_t)timeptr->tm_mday;
+                    log_info->StartTime.date.wday = (uint8_t)((timeptr->tm_wday == 0) ? 7 : timeptr->tm_wday);
+                    
+                    log_info->StartTime.time.hour = (uint8_t)timeptr->tm_hour;
+                    log_info->StartTime.time.min = (uint8_t)timeptr->tm_min;
+                    log_info->StartTime.time.sec = (uint8_t)timeptr->tm_sec;
+                    log_info->StartTime.time.hundredths = 0;
+                    
+                    log_info->tStartTime = current_time;
+                    log_info->ucTimeFlags &= ~TL_T_START_WILD;
+                }
+            }
+        }
+    }
 }
