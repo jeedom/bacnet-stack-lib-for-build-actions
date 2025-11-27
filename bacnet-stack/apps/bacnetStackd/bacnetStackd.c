@@ -532,7 +532,7 @@ static bool create_trendlog(uint32_t instance, const char *name,
             
             log_info->tStartTime = now;
             log_info->ucTimeFlags &= ~TL_T_START_WILD;
-            
+            log_info->tLastDataTime = 0;
             printf("  ✓ Timestamp initialized: %04d-%02d-%02d %02d:%02d:%02d\n",
                    log_info->StartTime.date.year,
                    log_info->StartTime.date.month,
@@ -3265,6 +3265,29 @@ static int handle_socket_line(const char *line)
         }
         return 0;
     }
+
+    if (strcmp(cmd, "trendlog-force-log") == 0) {
+        uint32_t instance = 0;
+        if (sscanf(line, "trendlog-force-log %u", &instance) == 1) {
+            if (Trend_Log_Valid_Instance(instance) && TL_Is_Enabled(instance)) {
+                trend_log_timer(1);
+                
+                TL_LOG_INFO *info = Trend_Log_Get_Info(instance);
+                if (info) {
+                    char response[256];
+                    snprintf(response, sizeof(response), 
+                            "OK: TL[%u] forced log attempt, RecordCount=%lu\n",
+                            instance, info->ulRecordCount);
+                    write(g_client_fd, response, strlen(response));
+                }
+            } else {
+                write(g_client_fd, "ERR: Invalid or disabled instance\n", 34);
+            }
+        } else {
+            write(g_client_fd, "Usage: trendlog-force-log <instance>\n", 38);
+        }
+        return 0;
+    }
     
     if (strcmp(cmd, "GET_WRITES") == 0) {
         FILE *fp = fopen(WRITE_LOG_FILE, "r");
@@ -3518,6 +3541,7 @@ int main(int argc, char *argv[])
     int argi = 1;
     char buf[256];
     static struct mstimer Trendlog_Timer = { 0 };
+    static unsigned long trendlog_tick_count = 0;
     
     memset(&src, 0, sizeof(src));
     
@@ -3648,6 +3672,22 @@ int main(int argc, char *argv[])
         if (mstimer_expired(&Trendlog_Timer)) {
             mstimer_reset(&Trendlog_Timer);
             trend_log_timer(1);
+            
+            trendlog_tick_count++;
+            if (trendlog_tick_count % 60 == 0) {  
+                printf("[DEBUG] Trendlog timer tick: %lu (1 per second)\n", trendlog_tick_count);
+                
+                unsigned int i;
+                for (i = 0; i < MAX_TREND_LOGS; i++) {
+                    if (Trend_Log_Valid_Instance(i) && TL_Is_Enabled(i)) {
+                        TL_LOG_INFO *info = Trend_Log_Get_Info(i);
+                        if (info) {
+                            printf("  TL[%u]: RecordCount=%lu, LastDataTime=%ld\n",
+                                i, info->ulRecordCount, (long)info->tLastDataTime);
+                        }
+                    }
+                }
+            }
         }
 
         process_socket_io();
