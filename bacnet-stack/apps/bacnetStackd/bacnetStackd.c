@@ -3548,6 +3548,7 @@ int main(int argc, char *argv[])
     char buf[256];
     static struct mstimer Trendlog_Timer = { 0 };
     static unsigned long trendlog_tick_count = 0;
+     static unsigned long trendlog_debug_counter = 0;
     
     memset(&src, 0, sizeof(src));
     
@@ -3675,26 +3676,46 @@ int main(int argc, char *argv[])
             }
         }
 
-        if (mstimer_expired(&Trendlog_Timer)) {
-            mstimer_reset(&Trendlog_Timer);
-            trend_log_timer(1);
+    if (mstimer_expired(&Trendlog_Timer)) {
+        mstimer_reset(&Trendlog_Timer);
+        
+        trendlog_debug_counter++;
+        
+        /* Debug toutes les 10 secondes */
+        if (trendlog_debug_counter % 10 == 0) {
+            unsigned int i;
+            time_t now = time(NULL);
             
-            trendlog_tick_count++;
-            if (trendlog_tick_count % 60 == 0) {  
-                printf("[DEBUG] Trendlog timer tick: %lu (1 per second)\n", trendlog_tick_count);
-                
-                unsigned int i;
-                for (i = 0; i < MAX_TREND_LOGS; i++) {
-                    if (Trend_Log_Valid_Instance(i) && TL_Is_Enabled(i)) {
-                        TL_LOG_INFO *info = Trend_Log_Get_Info(i);
-                        if (info) {
-                            printf("  TL[%u]: RecordCount=%lu, LastDataTime=%ld\n",
-                                i, info->ulRecordCount, (long)info->tLastDataTime);
-                        }
+            printf("\n=== TRENDLOG DEBUG (tick %lu) ===\n", trendlog_debug_counter);
+            printf("Current time: %ld\n", (long)now);
+            
+            for (i = 0; i < MAX_TREND_LOGS; i++) {
+                if (Trend_Log_Valid_Instance(i)) {
+                    TL_LOG_INFO *info = Trend_Log_Get_Info(i);
+                    bool enabled = TL_Is_Enabled(i);
+                    
+                    if (enabled && info) {
+                        printf("TL[%u]:\n", i);
+                        printf("  Enabled: %s\n", enabled ? "YES" : "NO");
+                        printf("  RecordCount: %lu\n", info->ulRecordCount);
+                        printf("  LogInterval: %lu cs (= %lu seconds)\n", 
+                            info->ulLogInterval, info->ulLogInterval / 100);
+                        printf("  tLastDataTime: %ld\n", (long)info->tLastDataTime);
+                        printf("  Time since last log: %ld seconds\n", 
+                            (long)(now - info->tLastDataTime));
+                        printf("  Should log? %s\n", 
+                            ((now - info->tLastDataTime) >= (info->ulLogInterval / 100)) ? "YES" : "NO");
+                        printf("  Source: %s[%u]\n",
+                            bactext_object_type_name(info->Source.objectIdentifier.type),
+                            info->Source.objectIdentifier.instance);
                     }
                 }
             }
+            printf("===============================\n\n");
         }
+        
+        trend_log_timer(1);
+    }
 
         process_socket_io();
     }
