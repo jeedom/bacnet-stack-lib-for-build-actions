@@ -517,7 +517,7 @@ static bool create_trendlog(uint32_t instance, const char *name,
             struct tm *lt = localtime(&now);
             
             /* Initialiser tLastDataTime */
-            log_info->tLastDataTime = now;
+            /* log_info->tLastDataTime = now;*/
             
             /* Initialiser StartTime avec la date/heure actuelle */
             log_info->StartTime.date.year = (uint16_t)(lt->tm_year + 1900);
@@ -3266,28 +3266,34 @@ static int handle_socket_line(const char *line)
         return 0;
     }
 
-    if (strcmp(cmd, "trendlog-force-log") == 0) {
-        uint32_t instance = 0;
-        if (sscanf(line, "trendlog-force-log %u", &instance) == 1) {
-            if (Trend_Log_Valid_Instance(instance) && TL_Is_Enabled(instance)) {
+if (strcmp(cmd, "trendlog-force-log") == 0) {
+    uint32_t instance = 0;
+    if (sscanf(line, "trendlog-force-log %u", &instance) == 1) {
+        if (Trend_Log_Valid_Instance(instance)) {  
+            TL_LOG_INFO *info = Trend_Log_Get_Info(instance);
+            if (info) {
+                time_t old_time = info->tLastDataTime;
+                info->tLastDataTime = 0;  
+                
                 trend_log_timer(1);
                 
-                TL_LOG_INFO *info = Trend_Log_Get_Info(instance);
-                if (info) {
-                    char response[256];
-                    snprintf(response, sizeof(response), 
-                            "OK: TL[%u] forced log attempt, RecordCount=%lu\n",
-                            instance, info->ulRecordCount);
-                    write(g_client_fd, response, strlen(response));
-                }
+                char response[256];
+                snprintf(response, sizeof(response), 
+                        "OK: TL[%u] forced (was %ld, now %ld), RecordCount=%lu\n",
+                        instance, (long)old_time, (long)info->tLastDataTime,
+                        info->ulRecordCount);
+                write(g_client_fd, response, strlen(response));
             } else {
-                write(g_client_fd, "ERR: Invalid or disabled instance\n", 34);
+                write(g_client_fd, "ERR: Cannot get log info\n", 26);
             }
         } else {
-            write(g_client_fd, "Usage: trendlog-force-log <instance>\n", 38);
+            write(g_client_fd, "ERR: Invalid instance\n", 22);
         }
-        return 0;
+    } else {
+        write(g_client_fd, "Usage: trendlog-force-log <instance>\n", 38);
     }
+    return 0;
+}
     
     if (strcmp(cmd, "GET_WRITES") == 0) {
         FILE *fp = fopen(WRITE_LOG_FILE, "r");
