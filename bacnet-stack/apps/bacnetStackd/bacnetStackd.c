@@ -2212,7 +2212,7 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
         
         printf("=== Phase 2 complete ===\n");
         
-        printf("=== Phase 3: Disabling unconfigured Trendlogs ===\n");
+       /* printf("=== Phase 3: Disabling unconfigured Trendlogs ===\n");
         {
             unsigned int idx;
             int configured_count = 0;
@@ -2285,10 +2285,10 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
                         }
                     }
                 }
-            }
-            
-            printf("=== Phase 3 complete: %d configured, %d disabled ===\n", 
-                   configured_count, disabled_count);
+            }*/
+            printf("=== Phase 3 ignored debug ===\n");
+            /*printf("=== Phase 3 complete: %d configured, %d disabled ===\n", 
+                   configured_count, disabled_count);*/
         }
     } else {
         printf("=== Skipping Trendlog reconfiguration (hot update mode) ===\n");
