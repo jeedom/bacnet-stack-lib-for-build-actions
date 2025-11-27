@@ -1840,8 +1840,8 @@ bool Trend_Log_Configure_Direct(
     
     /* Configuration des paramètres */
     log->LoggingType = LOGGING_TYPE_POLLED;
-    log->ulLogInterval = log_interval_seconds;
-    log->bAlignIntervals = false;
+    log->ulLogInterval = log_interval_seconds * 100; 
+    log->bAlignIntervals = true;
     log->ulIntervalOffset = 0;
     log->bStopWhenFull = false;
     log->bEnable = enable;
@@ -1856,7 +1856,7 @@ bool Trend_Log_Configure_Direct(
     /* Réinitialiser le buffer */
     log->ulRecordCount = 0;
     log->iIndex = 0;
-    log->tLastDataTime = Trend_Log_Epoch_Seconds_Now();
+    log->tLastDataTime = 0;
     
     return true;
 }
