@@ -2285,11 +2285,12 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
                         }
                     }
                 }
-            }*/
-            printf("=== Phase 3 ignored debug ===\n");
-            /*printf("=== Phase 3 complete: %d configured, %d disabled ===\n", 
-                   configured_count, disabled_count);*/
-        }
+            }
+           
+            printf("=== Phase 3 complete: %d configured, %d disabled ===\n", 
+                   configured_count, disabled_count);
+        }*/
+         printf("=== Phase 3 ignored debug ===\n");
     } else {
         printf("=== Skipping Trendlog reconfiguration (hot update mode) ===\n");
     }
