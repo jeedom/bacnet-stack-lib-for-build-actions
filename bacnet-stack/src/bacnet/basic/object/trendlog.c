@@ -1858,6 +1858,26 @@ bool Trend_Log_Configure_Direct(
     log->iIndex = 0;
     log->tLastDataTime = 0;
     
+    /* ========== AJOUTEZ CE BLOC DE DEBUG ICI ========== */
+    printf("  ╔═══════════════════════════════════════════════════╗\n");
+    printf("  ║ DEBUG Trend_Log_Configure_Direct() COMPLETED     ║\n");
+    printf("  ╠═══════════════════════════════════════════════════╣\n");
+    printf("  ║ Instance: %u                                      \n", instance);
+    printf("  ║ bEnable: %s                                       \n", log->bEnable ? "TRUE" : "FALSE");
+    printf("  ║ ucTimeFlags: 0x%02X                               \n", log->ucTimeFlags);
+    printf("  ║ tStartTime: %ld                                   \n", (long)log->tStartTime);
+    printf("  ║ tStopTime: %ld                                    \n", (long)log->tStopTime);
+    printf("  ║ ulLogInterval: %lu cs (= %lu seconds)             \n", log->ulLogInterval, log->ulLogInterval / 100);
+    printf("  ╠═══════════════════════════════════════════════════╣\n");
+    printf("  ║ TESTING TL_Is_Enabled(%d)...                     \n", log_index);
+    
+    bool is_enabled_result = TL_Is_Enabled(log_index);
+    
+    printf("  ║ TL_Is_Enabled(%d) = %s                           \n", 
+           log_index, is_enabled_result ? "✓ TRUE" : "✗ FALSE");
+    printf("  ╚═══════════════════════════════════════════════════╝\n");
+    /* ========== FIN DU BLOC DEBUG ========== */
+    
     return true;
 }
 /**
