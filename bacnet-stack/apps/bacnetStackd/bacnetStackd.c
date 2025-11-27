@@ -3681,34 +3681,32 @@ int main(int argc, char *argv[])
         
         trendlog_debug_counter++;
         
-        /* Debug toutes les 10 secondes */
         if (trendlog_debug_counter % 10 == 0) {
             unsigned int i;
             time_t now = time(NULL);
-            
+            unsigned int count = Trend_Log_Count(); 
             printf("\n=== TRENDLOG DEBUG (tick %lu) ===\n", trendlog_debug_counter);
             printf("Current time: %ld\n", (long)now);
-            
-            for (i = 0; i < MAX_TREND_LOGS; i++) {
-                if (Trend_Log_Valid_Instance(i)) {
-                    TL_LOG_INFO *info = Trend_Log_Get_Info(i);
-                    bool enabled = TL_Is_Enabled(i);
-                    
-                    if (enabled && info) {
-                        printf("TL[%u]:\n", i);
-                        printf("  Enabled: %s\n", enabled ? "YES" : "NO");
-                        printf("  RecordCount: %lu\n", info->ulRecordCount);
-                        printf("  LogInterval: %lu cs (= %lu seconds)\n", 
-                            info->ulLogInterval, info->ulLogInterval / 100);
-                        printf("  tLastDataTime: %ld\n", (long)info->tLastDataTime);
-                        printf("  Time since last log: %ld seconds\n", 
-                            (long)(now - info->tLastDataTime));
-                        printf("  Should log? %s\n", 
-                            ((now - info->tLastDataTime) >= (info->ulLogInterval / 100)) ? "YES" : "NO");
-                        printf("  Source: %s[%u]\n",
-                            bactext_object_type_name(info->Source.objectIdentifier.type),
-                            info->Source.objectIdentifier.instance);
-                    }
+             printf("Trend_Log_Count() = %u\n", count); 
+            for (i = 0; i < count; i++) { 
+                uint32_t instance = Trend_Log_Index_To_Instance(i); 
+                TL_LOG_INFO *info = Trend_Log_Get_Info(instance);   
+                bool enabled = TL_Is_Enabled(instance);            
+                
+                if (info) {  
+                    printf("TL[%u]:\n", instance);
+                    printf("  Enabled: %s\n", enabled ? "YES" : "NO");
+                    printf("  RecordCount: %lu\n", info->ulRecordCount);
+                    printf("  LogInterval: %lu cs (= %lu seconds)\n", 
+                        info->ulLogInterval, info->ulLogInterval / 100);
+                    printf("  tLastDataTime: %ld\n", (long)info->tLastDataTime);
+                    printf("  Time since last log: %ld seconds\n", 
+                        (long)(now - info->tLastDataTime));
+                    printf("  Should log? %s\n", 
+                        ((now - info->tLastDataTime) >= (info->ulLogInterval / 100)) ? "YES" : "NO");
+                    printf("  Source: %s[%u]\n",
+                        bactext_object_type_name(info->Source.objectIdentifier.type),
+                        info->Source.objectIdentifier.instance);
                 }
             }
             printf("===============================\n\n");
