@@ -530,8 +530,8 @@ static bool create_trendlog(uint32_t instance, const char *name,
             log_info->StartTime.time.sec = (uint8_t)lt->tm_sec;
             log_info->StartTime.time.hundredths = 0;
             
-            log_info->tStartTime = now;
-            log_info->ucTimeFlags &= ~TL_T_START_WILD;
+            /*log_info->tStartTime = now;
+            log_info->ucTimeFlags &= ~TL_T_START_WILD;*/
             log_info->tLastDataTime = 0;
             printf("  ✓ Timestamp initialized: %04d-%02d-%02d %02d:%02d:%02d\n",
                    log_info->StartTime.date.year,
