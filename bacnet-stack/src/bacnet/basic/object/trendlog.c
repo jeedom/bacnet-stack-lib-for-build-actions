@@ -146,12 +146,18 @@ unsigned Trend_Log_Instance_To_Index(uint32_t object_instance)
  * @brief Get the current time from the Device object
  * @return current time in epoch seconds
  */
-static bacnet_time_t Trend_Log_Epoch_Seconds_Now(void)
+/*static bacnet_time_t Trend_Log_Epoch_Seconds_Now(void)
 {
     BACNET_DATE_TIME bdatetime;
 
     Device_getCurrentDateTime(&bdatetime);
     return datetime_seconds_since_epoch(&bdatetime);
+}*/
+
+static bacnet_time_t Trend_Log_Epoch_Seconds_Now(void)
+{
+    /* Utiliser directement le timestamp système Unix */
+    return (bacnet_time_t)time(NULL);
 }
 
 /*
