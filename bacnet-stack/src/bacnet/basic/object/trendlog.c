@@ -1863,7 +1863,7 @@ bool Trend_Log_Configure_Direct(
     /* Configuration des paramètres */
     log->LoggingType = LOGGING_TYPE_POLLED;
     log->ulLogInterval = log_interval_seconds * 100; 
-    log->bAlignIntervals = true;
+    log->bAlignIntervals = false;
     log->ulIntervalOffset = 0;
     log->bStopWhenFull = false;
     log->bEnable = enable;
