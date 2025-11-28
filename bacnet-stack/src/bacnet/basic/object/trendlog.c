@@ -1739,6 +1739,22 @@ static void TL_fetch_property(int iLog)
 }
 
 /**
+ * @brief Force an immediate sample for a specific trendlog
+ * @param instance - Trendlog instance number
+ */
+void Trend_Log_Force_Sample(uint32_t instance)
+{
+    int log_index;
+    
+    log_index = Trend_Log_Instance_To_Index(instance);
+    if (log_index >= 0 && log_index < MAX_TREND_LOGS) {
+        if (TL_Is_Enabled(log_index)) {
+            TL_fetch_property(log_index);
+        }
+    }
+}
+
+/**
  * @brief Check each log to see if any data needs to be recorded.
  * @param uSeconds - Number of seconds since last called (not used).
  */

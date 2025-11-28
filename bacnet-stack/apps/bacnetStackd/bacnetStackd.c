@@ -3273,16 +3273,13 @@ if (strcmp(cmd, "trendlog-force-log") == 0) {
         if (Trend_Log_Valid_Instance(instance)) {  
             TL_LOG_INFO *info = Trend_Log_Get_Info(instance);
             if (info) {
-                time_t old_time = info->tLastDataTime;
-                info->tLastDataTime = 0;  
-                
-                trend_log_timer(1);
+                unsigned long old_count = info->ulRecordCount;
+                Trend_Log_Force_Sample(instance); 
                 
                 char response[256];
                 snprintf(response, sizeof(response), 
-                        "OK: TL[%u] forced (was %ld, now %ld), RecordCount=%lu\n",
-                        instance, (long)old_time, (long)info->tLastDataTime,
-                        info->ulRecordCount);
+                        "OK: TL[%u] forced - RecordCount: %lu → %lu\n",
+                        instance, old_count, info->ulRecordCount);
                 write(g_client_fd, response, strlen(response));
             } else {
                 write(g_client_fd, "ERR: Cannot get log info\n", 26);

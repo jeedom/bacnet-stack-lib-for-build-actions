@@ -181,6 +181,8 @@ int rr_trend_log_encode(uint8_t *apdu, BACNET_READ_RANGE_DATA *pRequest);
 BACNET_STACK_EXPORT
 void trend_log_timer(uint16_t uSeconds);
 
+void Trend_Log_Force_Sample(uint32_t instance);
+
 BACNET_STACK_EXPORT
 TL_LOG_INFO *Trend_Log_Get_Info(unsigned int index);
 
