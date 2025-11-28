@@ -60,7 +60,7 @@
 /* Variables globales */
 static char g_write_callback_url[512] = {0};
 static json_t *g_config_root = NULL;
-
+extern void TL_Local_Time_To_BAC(BACNET_DATE_TIME *bdatetime, bacnet_time_t seconds);
 
 
 static void Init_Schedules(void);
@@ -72,7 +72,6 @@ extern TL_LOG_INFO LogInfo[];
 static int save_current_config(void);
 static int save_config_to_file(const char *filepath);
 extern TL_DATA_REC Logs[][TL_MAX_ENTRIES];
-extern void TL_Local_Time_To_BAC(BACNET_DATE_TIME *bdatetime, bacnet_time_t seconds);
 
 static void Schedule_Init_Empty(void)
 {
@@ -2675,16 +2674,20 @@ static int handle_cmd_trendlog(uint32_t instance)
 
 static char* handle_cmd_trendlog_data_json(uint32_t instance, int count)
 {
-    json_t *root = json_object();
-    json_t *data_array = json_array();
+    json_t *root;
+    json_t *data_array;
     unsigned int i;
     TL_LOG_INFO *log_info;
-    int log_index;
+    int start_pos;
+    char *json_str;
+    
+    root = json_object();
+    data_array = json_array();
     
     if (!Trend_Log_Valid_Instance(instance)) {
         fprintf(stderr, "ERROR: Trendlog instance %u not valid\n", instance);
         json_object_set_new(root, "error", json_string("Invalid instance"));
-        char *json_str = json_dumps(root, JSON_INDENT(2));
+        json_str = json_dumps(root, JSON_INDENT(2));
         json_decref(root);
         return json_str;
     }
@@ -2692,12 +2695,11 @@ static char* handle_cmd_trendlog_data_json(uint32_t instance, int count)
     if (count <= 0) count = 10;
     if (count > 100) count = 100;
     
-    log_index = Trend_Log_Instance_To_Index(instance);
     log_info = Trend_Log_Get_Info(instance);
     
     if (!log_info) {
         json_object_set_new(root, "error", json_string("Cannot get log info"));
-        char *json_str = json_dumps(root, JSON_INDENT(2));
+        json_str = json_dumps(root, JSON_INDENT(2));
         json_decref(root);
         return json_str;
     }
@@ -2708,12 +2710,12 @@ static char* handle_cmd_trendlog_data_json(uint32_t instance, int count)
     json_object_set_new(root, "requested_count", json_integer(count));
     json_object_set_new(root, "total_records", json_integer(log_info->ulRecordCount));
     
-    printf("Total records available: %lu\n", log_info->ulRecordCount);
+    printf("Total records available: %u\n", log_info->ulRecordCount);
     
     if (log_info->ulRecordCount == 0) {
         printf("No data logged yet.\n");
         json_object_set_new(root, "data", data_array);
-        char *json_str = json_dumps(root, JSON_INDENT(2));
+        json_str = json_dumps(root, JSON_INDENT(2));
         json_decref(root);
         return json_str;
     }
@@ -2723,12 +2725,7 @@ static char* handle_cmd_trendlog_data_json(uint32_t instance, int count)
         count = log_info->ulRecordCount;
     }
     
-    /* ========== ACCÈS DIRECT AUX DONNÉES ========== */
-    /* Déclarez ces externes en haut du fichier bacnetstackd.c */
-    extern TL_DATA_REC Logs[][TL_MAX_ENTRIES];
-    
     /* Calculer l'index de départ dans le buffer circulaire */
-    int start_pos;
     if (log_info->ulRecordCount < TL_MAX_ENTRIES) {
         /* Buffer pas encore plein, commence à 0 */
         start_pos = log_info->ulRecordCount - count;
@@ -2744,11 +2741,22 @@ static char* handle_cmd_trendlog_data_json(uint32_t instance, int count)
            count, start_pos);
     
     for (i = 0; i < (unsigned int)count; i++) {
-        json_t *entry = json_object();
-        int buffer_index = (start_pos + i) % TL_MAX_ENTRIES;
-        TL_DATA_REC *record = &Logs[log_index][buffer_index];
+        json_t *entry;
+        int buffer_index;
+        TL_DATA_REC *record;
         BACNET_DATE_TIME timestamp;
         char timestamp_str[64];
+        
+        entry = json_object();
+        buffer_index = (start_pos + i) % TL_MAX_ENTRIES;
+        record = Trend_Log_Get_Record(instance, buffer_index);
+        
+        if (!record) {
+            json_object_set_new(entry, "index", json_integer(i+1));
+            json_object_set_new(entry, "error", json_string("Failed to read record"));
+            json_array_append_new(data_array, entry);
+            continue;
+        }
         
         /* Convertir le timestamp */
         TL_Local_Time_To_BAC(&timestamp, record->tTimeStamp);
@@ -2782,19 +2790,19 @@ static char* handle_cmd_trendlog_data_json(uint32_t instance, int count)
             case TL_TYPE_UNSIGN:
                 json_object_set_new(entry, "value", json_integer(record->Datum.ulUValue));
                 json_object_set_new(entry, "type", json_string("UNSIGNED_INT"));
-                printf("[%u] %s: %lu\n", i+1, timestamp_str, record->Datum.ulUValue);
+                printf("[%u] %s: %u\n", i+1, timestamp_str, record->Datum.ulUValue);
                 break;
                 
             case TL_TYPE_SIGN:
                 json_object_set_new(entry, "value", json_integer(record->Datum.lSValue));
                 json_object_set_new(entry, "type", json_string("SIGNED_INT"));
-                printf("[%u] %s: %ld\n", i+1, timestamp_str, record->Datum.lSValue);
+                printf("[%u] %s: %d\n", i+1, timestamp_str, record->Datum.lSValue);
                 break;
                 
             case TL_TYPE_ENUM:
                 json_object_set_new(entry, "value", json_integer(record->Datum.ulEnum));
                 json_object_set_new(entry, "type", json_string("ENUMERATED"));
-                printf("[%u] %s: %lu\n", i+1, timestamp_str, record->Datum.ulEnum);
+                printf("[%u] %s: %u\n", i+1, timestamp_str, record->Datum.ulEnum);
                 break;
                 
             case TL_TYPE_NULL:
@@ -2816,7 +2824,7 @@ static char* handle_cmd_trendlog_data_json(uint32_t instance, int count)
     json_object_set_new(root, "data", data_array);
     json_object_set_new(root, "retrieved_count", json_integer(count));
     
-    char *json_str = json_dumps(root, JSON_INDENT(2));
+    json_str = json_dumps(root, JSON_INDENT(2));
     json_decref(root);
     return json_str;
 }

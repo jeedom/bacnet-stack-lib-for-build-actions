@@ -1908,3 +1908,34 @@ TL_LOG_INFO *Trend_Log_Get_Info(unsigned int index)
     }
     return NULL;
 }
+
+/**
+ * Get a pointer to a specific log record in the buffer
+ * 
+ * @param instance - Trendlog instance number
+ * @param index - Record index (0 = oldest in circular buffer)
+ * @return Pointer to the record, or NULL if invalid
+ */
+TL_DATA_REC *Trend_Log_Get_Record(uint32_t instance, int index)
+{
+    int log_index;
+    TL_LOG_INFO *log_info;
+    
+    log_index = Trend_Log_Instance_To_Index(instance);
+    if (log_index < 0 || log_index >= MAX_TREND_LOGS) {
+        return NULL;
+    }
+    
+    log_info = &LogInfo[log_index];
+    
+    if (index < 0 || (unsigned int)index >= TL_MAX_ENTRIES) {
+        return NULL;
+    }
+    
+    /* Vérifier que l'index est dans les données valides */
+    if (log_info->ulRecordCount == 0) {
+        return NULL;
+    }
+    
+    return &Logs[log_index][index];
+}

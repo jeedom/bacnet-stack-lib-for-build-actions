@@ -186,6 +186,9 @@ void Trend_Log_Force_Sample(uint32_t instance);
 BACNET_STACK_EXPORT
 TL_LOG_INFO *Trend_Log_Get_Info(unsigned int index);
 
+BACNET_STACK_EXPORT
+TL_DATA_REC *Trend_Log_Get_Record(uint32_t instance, int index);
+
 #ifdef __cplusplus
 }
 #endif /* __cplusplus */
