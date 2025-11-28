@@ -2759,16 +2759,17 @@ static char* handle_cmd_trendlog_data_json(uint32_t instance, int count)
         }
         
         /* Convertir le timestamp */
-        TL_Local_Time_To_BAC(&timestamp, record->tTimeStamp);
-        
+        time_t unix_time = (time_t)record->tTimeStamp;
+        struct tm *tm_info = localtime(&unix_time);
+
         snprintf(timestamp_str, sizeof(timestamp_str),
                 "%04d-%02d-%02d %02d:%02d:%02d",
-                timestamp.date.year,
-                timestamp.date.month,
-                timestamp.date.day,
-                timestamp.time.hour,
-                timestamp.time.min,
-                timestamp.time.sec);
+                tm_info->tm_year + 1900,
+                tm_info->tm_mon + 1,
+                tm_info->tm_mday,
+                tm_info->tm_hour,
+                tm_info->tm_min,
+                tm_info->tm_sec);
         
         json_object_set_new(entry, "timestamp", json_string(timestamp_str));
         
