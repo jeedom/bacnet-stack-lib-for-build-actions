@@ -71,6 +71,8 @@ extern TL_LOG_INFO LogInfo[];
 
 static int save_current_config(void);
 static int save_config_to_file(const char *filepath);
+extern TL_DATA_REC Logs[][TL_MAX_ENTRIES];
+extern void TL_Local_Time_To_BAC(BACNET_DATE_TIME *bdatetime, bacnet_time_t seconds);
 
 static void Schedule_Init_Empty(void)
 {
@@ -2675,19 +2677,13 @@ static char* handle_cmd_trendlog_data_json(uint32_t instance, int count)
 {
     json_t *root = json_object();
     json_t *data_array = json_array();
-    BACNET_READ_PROPERTY_DATA rpdata;
-    uint8_t apdu[MAX_APDU];
-    int apdu_len;
-    BACNET_APPLICATION_DATA_VALUE value;
-    int decode_len;
     unsigned int i;
-    unsigned int record_count_value = 0;
-    unsigned int start_index = 1;
+    TL_LOG_INFO *log_info;
+    int log_index;
     
     if (!Trend_Log_Valid_Instance(instance)) {
         fprintf(stderr, "ERROR: Trendlog instance %u not valid\n", instance);
         json_object_set_new(root, "error", json_string("Invalid instance"));
-        
         char *json_str = json_dumps(root, JSON_INDENT(2));
         json_decref(root);
         return json_str;
@@ -2696,163 +2692,133 @@ static char* handle_cmd_trendlog_data_json(uint32_t instance, int count)
     if (count <= 0) count = 10;
     if (count > 100) count = 100;
     
+    log_index = Trend_Log_Instance_To_Index(instance);
+    log_info = Trend_Log_Get_Info(instance);
+    
+    if (!log_info) {
+        json_object_set_new(root, "error", json_string("Cannot get log info"));
+        char *json_str = json_dumps(root, JSON_INDENT(2));
+        json_decref(root);
+        return json_str;
+    }
+    
     printf("========== Trendlog %u Data (last %d entries) ==========\n", instance, count);
     
     json_object_set_new(root, "instance", json_integer(instance));
     json_object_set_new(root, "requested_count", json_integer(count));
+    json_object_set_new(root, "total_records", json_integer(log_info->ulRecordCount));
     
-    memset(&rpdata, 0, sizeof(rpdata));
-    rpdata.object_type = OBJECT_TRENDLOG;
-    rpdata.object_instance = instance;
-    rpdata.object_property = PROP_RECORD_COUNT;
-    rpdata.array_index = BACNET_ARRAY_ALL;
-    rpdata.application_data = apdu;
-    rpdata.application_data_len = sizeof(apdu);
+    printf("Total records available: %lu\n", log_info->ulRecordCount);
     
-    apdu_len = Trend_Log_Read_Property(&rpdata);
-    if (apdu_len > 0) {
-        decode_len = bacapp_decode_application_data(rpdata.application_data,
-                                                    rpdata.application_data_len,
-                                                    &value);
-        if (decode_len > 0 && value.tag == BACNET_APPLICATION_TAG_UNSIGNED_INT) {
-            record_count_value = value.type.Unsigned_Int;
-            json_object_set_new(root, "total_records", json_integer(record_count_value));
-            printf("Total records available: %u\n", record_count_value);
-            
-            if (record_count_value == 0) {
-                printf("No data logged yet.\n");
-                json_object_set_new(root, "data", data_array);
-                
-                char *json_str = json_dumps(root, JSON_INDENT(2));
-                json_decref(root);
-                return json_str;
-            }
-            
-            if ((unsigned int)count > record_count_value) {
-                count = record_count_value;
-            }
+    if (log_info->ulRecordCount == 0) {
+        printf("No data logged yet.\n");
+        json_object_set_new(root, "data", data_array);
+        char *json_str = json_dumps(root, JSON_INDENT(2));
+        json_decref(root);
+        return json_str;
+    }
+    
+    /* Limiter count au nombre de records disponibles */
+    if ((unsigned int)count > log_info->ulRecordCount) {
+        count = log_info->ulRecordCount;
+    }
+    
+    /* ========== ACCÈS DIRECT AUX DONNÉES ========== */
+    /* Déclarez ces externes en haut du fichier bacnetstackd.c */
+    extern TL_DATA_REC Logs[][TL_MAX_ENTRIES];
+    
+    /* Calculer l'index de départ dans le buffer circulaire */
+    int start_pos;
+    if (log_info->ulRecordCount < TL_MAX_ENTRIES) {
+        /* Buffer pas encore plein, commence à 0 */
+        start_pos = log_info->ulRecordCount - count;
+    } else {
+        /* Buffer plein et circulaire */
+        start_pos = log_info->iIndex - count;
+        if (start_pos < 0) {
+            start_pos += TL_MAX_ENTRIES;
         }
     }
     
-    if (record_count_value >= (unsigned int)count) {
-        start_index = record_count_value - count + 1;
-    } else {
-        start_index = 1;
-    }
-    
-    printf("Reading last %d entries (index %u to %u)...\n\n", 
-           count, start_index, record_count_value);
+    printf("Reading last %d entries (starting at buffer position %d)...\n\n", 
+           count, start_pos);
     
     for (i = 0; i < (unsigned int)count; i++) {
         json_t *entry = json_object();
-        int index = start_index + i;
+        int buffer_index = (start_pos + i) % TL_MAX_ENTRIES;
+        TL_DATA_REC *record = &Logs[log_index][buffer_index];
+        BACNET_DATE_TIME timestamp;
+        char timestamp_str[64];
         
-        memset(&rpdata, 0, sizeof(rpdata));
-        rpdata.object_type = OBJECT_TRENDLOG;
-        rpdata.object_instance = instance;
-        rpdata.object_property = PROP_LOG_BUFFER;
-        rpdata.array_index = index;
-        rpdata.application_data = apdu;
-        rpdata.application_data_len = sizeof(apdu);
+        /* Convertir le timestamp */
+        TL_Local_Time_To_BAC(&timestamp, record->tTimeStamp);
         
-        apdu_len = Trend_Log_Read_Property(&rpdata);
+        snprintf(timestamp_str, sizeof(timestamp_str),
+                "%04d-%02d-%02d %02d:%02d:%02d",
+                timestamp.date.year,
+                timestamp.date.month,
+                timestamp.date.day,
+                timestamp.time.hour,
+                timestamp.time.min,
+                timestamp.time.sec);
         
-        if (apdu_len > 0) {
-            uint8_t *apdu_ptr = rpdata.application_data;
-            int total_len = 0;
-            
-            if (decode_is_opening_tag_number(apdu_ptr, 0)) {
-                BACNET_DATE_TIME timestamp;
-                char timestamp_str[64];
-                total_len++;
-                apdu_ptr++;
+        json_object_set_new(entry, "timestamp", json_string(timestamp_str));
+        
+        /* Décoder la valeur selon le type */
+        switch (record->ucRecType) {
+            case TL_TYPE_REAL:
+                json_object_set_new(entry, "value", json_real(record->Datum.fReal));
+                json_object_set_new(entry, "type", json_string("REAL"));
+                printf("[%u] %s: %.2f\n", i+1, timestamp_str, record->Datum.fReal);
+                break;
                 
-                decode_len = bacapp_decode_application_data(apdu_ptr, 
-                                                           apdu_len - total_len,
-                                                           &value);
-                if (decode_len > 0 && value.tag == BACNET_APPLICATION_TAG_TIMESTAMP) {
-                    timestamp = value.type.Date_Time;
-                    
-                    snprintf(timestamp_str, sizeof(timestamp_str),
-                            "%04d-%02d-%02d %02d:%02d:%02d",
-                            timestamp.date.year + 1900,
-                            timestamp.date.month,
-                            timestamp.date.day,
-                            timestamp.time.hour,
-                            timestamp.time.min,
-                            timestamp.time.sec);
-                    
-                    json_object_set_new(entry, "timestamp", json_string(timestamp_str));
-                    
-                    total_len += decode_len;
-                    apdu_ptr += decode_len;
-                }
+            case TL_TYPE_BOOL:
+                json_object_set_new(entry, "value", json_boolean(record->Datum.ucBoolean));
+                json_object_set_new(entry, "type", json_string("BOOLEAN"));
+                printf("[%u] %s: %s\n", i+1, timestamp_str, 
+                       record->Datum.ucBoolean ? "TRUE" : "FALSE");
+                break;
                 
-                decode_len = bacapp_decode_application_data(apdu_ptr,
-                                                           apdu_len - total_len,
-                                                           &value);
-                if (decode_len > 0) {
-                    switch (value.tag) {
-                        case BACNET_APPLICATION_TAG_REAL:
-                            json_object_set_new(entry, "value", json_real(value.type.Real));
-                            json_object_set_new(entry, "type", json_string("REAL"));
-                            printf("[%u] %.2f\n", index, value.type.Real);
-                            break;
-                            
-                        case BACNET_APPLICATION_TAG_BOOLEAN:
-                            json_object_set_new(entry, "value", json_boolean(value.type.Boolean));
-                            json_object_set_new(entry, "type", json_string("BOOLEAN"));
-                            printf("[%u] %s\n", index, value.type.Boolean ? "TRUE" : "FALSE");
-                            break;
-                            
-                        case BACNET_APPLICATION_TAG_UNSIGNED_INT:
-                            json_object_set_new(entry, "value", json_integer(value.type.Unsigned_Int));
-                            json_object_set_new(entry, "type", json_string("UNSIGNED_INT"));
-                            printf("[%u] %u\n", index, (unsigned int)value.type.Unsigned_Int);
-                            break;
-                            
-                        case BACNET_APPLICATION_TAG_SIGNED_INT:
-                            json_object_set_new(entry, "value", json_integer(value.type.Signed_Int));
-                            json_object_set_new(entry, "type", json_string("SIGNED_INT"));
-                            printf("[%u] %d\n", index, value.type.Signed_Int);
-                            break;
-                            
-                        case BACNET_APPLICATION_TAG_ENUMERATED:
-                            json_object_set_new(entry, "value", json_integer(value.type.Enumerated));
-                            json_object_set_new(entry, "type", json_string("ENUMERATED"));
-                            printf("[%u] %u\n", index, (unsigned int)value.type.Enumerated);
-                            break;
-                            
-                        default:
-                            json_object_set_new(entry, "value", json_null());
-                            json_object_set_new(entry, "type", json_string("UNKNOWN"));
-                            printf("[%u] (unknown type %d)\n", index, value.tag);
-                            break;
-                    }
-                    
-                    total_len += decode_len;
-                    apdu_ptr += decode_len;
-                }
+            case TL_TYPE_UNSIGN:
+                json_object_set_new(entry, "value", json_integer(record->Datum.ulUValue));
+                json_object_set_new(entry, "type", json_string("UNSIGNED_INT"));
+                printf("[%u] %s: %lu\n", i+1, timestamp_str, record->Datum.ulUValue);
+                break;
                 
-                json_array_append_new(data_array, entry);
-            } else {
-                json_object_set_new(entry, "index", json_integer(index));
-                json_object_set_new(entry, "error", json_string("Failed to decode entry"));
-                json_array_append_new(data_array, entry);
-            }
-        } else {
-            json_object_set_new(entry, "index", json_integer(index));
-            json_object_set_new(entry, "error", json_string("Failed to read LOG_BUFFER"));
-            json_array_append_new(data_array, entry);
+            case TL_TYPE_SIGN:
+                json_object_set_new(entry, "value", json_integer(record->Datum.lSValue));
+                json_object_set_new(entry, "type", json_string("SIGNED_INT"));
+                printf("[%u] %s: %ld\n", i+1, timestamp_str, record->Datum.lSValue);
+                break;
+                
+            case TL_TYPE_ENUM:
+                json_object_set_new(entry, "value", json_integer(record->Datum.ulEnum));
+                json_object_set_new(entry, "type", json_string("ENUMERATED"));
+                printf("[%u] %s: %lu\n", i+1, timestamp_str, record->Datum.ulEnum);
+                break;
+                
+            case TL_TYPE_NULL:
+                json_object_set_new(entry, "value", json_null());
+                json_object_set_new(entry, "type", json_string("NULL"));
+                printf("[%u] %s: NULL\n", i+1, timestamp_str);
+                break;
+                
+            default:
+                json_object_set_new(entry, "value", json_null());
+                json_object_set_new(entry, "type", json_string("UNKNOWN"));
+                printf("[%u] %s: (unknown type %d)\n", i+1, timestamp_str, record->ucRecType);
+                break;
         }
+        
+        json_array_append_new(data_array, entry);
     }
     
     json_object_set_new(root, "data", data_array);
-    json_object_set_new(root, "retrieved_count", json_integer(json_array_size(data_array)));
+    json_object_set_new(root, "retrieved_count", json_integer(count));
     
     char *json_str = json_dumps(root, JSON_INDENT(2));
     json_decref(root);
-    return json_str; 
+    return json_str;
 }
 
 static int handle_cmd_trendlog_enable(uint32_t instance, bool enable)
