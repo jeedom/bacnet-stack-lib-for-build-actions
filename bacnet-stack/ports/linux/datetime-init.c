@@ -143,7 +143,8 @@ bool datetime_local(
             btime, (uint8_t)tblock->tm_hour, (uint8_t)tblock->tm_min,
             (uint8_t)tblock->tm_sec, (uint8_t)(tv.tv_usec / 10000));
         
-        printf("  After datetime_set_date: bdate->year=%u\n", bdate->year);
+        printf("  After datetime_set_date: bdate->year=%u month=%u day=%u\n", 
+               bdate->year, bdate->month, bdate->day);
         printf("🔍 DEBUG datetime_local() EXIT\n\n");
         if (dst_active) {
             /* The value of tm_isdst is:

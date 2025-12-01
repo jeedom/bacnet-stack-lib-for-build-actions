@@ -2461,11 +2461,37 @@ void Device_Init(object_functions_t *object_table)
 {
     struct object_functions *pObject = NULL;
     bool datetime_result = false;
+    time_t raw_time;
+    struct tm *time_info;
     
     printf("\n");
     printf("╔════════════════════════════════════════════════════════════╗\n");
     printf("║ Device_Init() STARTING                                     ║\n");
     printf("╚════════════════════════════════════════════════════════════╝\n");
+    
+    /* CRITICAL: Check system time FIRST */
+    raw_time = time(NULL);
+    printf("⏰ SYSTEM TIME CHECK:\n");
+    printf("   time(NULL) = %ld seconds since epoch\n", (long)raw_time);
+    
+    if (raw_time < 1000000) {
+        printf("   ❌ WARNING: System time is WRONG! (< 1M seconds)\n");
+        printf("   ❌ This means system clock is NOT set correctly!\n");
+        printf("   ❌ Expected: ~1733000000 (Dec 2025)\n");
+        printf("   ❌ Got:      %ld\n", (long)raw_time);
+    } else {
+        time_info = localtime(&raw_time);
+        if (time_info) {
+            printf("   ✓ System time appears valid:\n");
+            printf("     %04d-%02d-%02d %02d:%02d:%02d\n",
+                   time_info->tm_year + 1900,
+                   time_info->tm_mon + 1,
+                   time_info->tm_mday,
+                   time_info->tm_hour,
+                   time_info->tm_min,
+                   time_info->tm_sec);
+        }
+    }
     
     characterstring_init_ansi(&My_Object_Name, "SimpleServer");
     datetime_init();
