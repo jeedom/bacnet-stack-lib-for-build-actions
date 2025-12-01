@@ -47,6 +47,7 @@
 #include "trendlog_override.h"
 #include "bacnet/basic/object/device.h"
 #include "bacnet/basic/services.h"
+#include "bacnet/basic/service/h_apdu.h"
 #include "bacnet/datalink/datalink.h"
 #include "bacnet/datalink/dlenv.h"
 #include "bacnet/dcc.h"
@@ -1572,9 +1573,9 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
             }
             
             j_oos = json_object_get(it, "outOfService");
-            oos = j_oos ? json_boolean_value(j_oos) : true;
+            oos = j_oos ? json_boolean_value(j_oos) : false;
             Analog_Input_Out_Of_Service_Set(inst, oos);
-            printf("  Out_Of_Service = %s (simulated sensor)\n", oos ? "true" : "false");
+            printf("  Out_Of_Service = %s\n", oos ? "true" : "false");
         }
         else if (strcmp(typ, "analog-output") == 0) {
             bool exists = Analog_Output_Valid_Instance(inst);
@@ -1598,9 +1599,9 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
             }
             
             j_oos = json_object_get(it, "outOfService");
-            oos = j_oos ? json_boolean_value(j_oos) : true;
+            oos = j_oos ? json_boolean_value(j_oos) : false;
             Analog_Output_Out_Of_Service_Set(inst, oos);
-            printf("  Out_Of_Service = %s (simulated actuator)\n", oos ? "true" : "false");
+            printf("  Out_Of_Service = %s\n", oos ? "true" : "false");
         }
         else if (strcmp(typ, "analog-value") == 0) {
             bool exists = Analog_Value_Valid_Instance(inst);
@@ -1661,9 +1662,9 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
             }
             
             j_oos = json_object_get(it, "outOfService");
-            oos = j_oos ? json_boolean_value(j_oos) : true;
+            oos = j_oos ? json_boolean_value(j_oos) : false;
             Binary_Input_Out_Of_Service_Set(inst, oos);
-            printf("  Out_Of_Service = %s (simulated sensor)\n", oos ? "true" : "false");
+            printf("  Out_Of_Service = %s\n", oos ? "true" : "false");
         }
         else if (strcmp(typ, "binary-output") == 0) {
             bool exists;
@@ -1693,9 +1694,9 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
             }
             
             j_oos = json_object_get(it, "outOfService");
-            oos = j_oos ? json_boolean_value(j_oos) : true;
+            oos = j_oos ? json_boolean_value(j_oos) : false;
             Binary_Output_Out_Of_Service_Set(inst, oos);
-            printf("  Out_Of_Service = %s (simulated actuator)\n", oos ? "true" : "false");
+            printf("  Out_Of_Service = %s\n", oos ? "true" : "false");
         }
         else if (strcmp(typ, "binary-value") == 0) {
             bool exists;
@@ -1766,9 +1767,9 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
             }
             
             j_oos = json_object_get(it, "outOfService");
-            oos = j_oos ? json_boolean_value(j_oos) : true;
+            oos = j_oos ? json_boolean_value(j_oos) : false;
             Multistate_Input_Out_Of_Service_Set(inst, oos);
-            printf("  Out_Of_Service = %s (simulated sensor)\n", oos ? "true" : "false");
+            printf("  Out_Of_Service = %s\n", oos ? "true" : "false");
         }
         else if (strcmp(typ, "multi-state-output") == 0) {
             json_t *state_texts;
@@ -1807,9 +1808,9 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
             }
             
             j_oos = json_object_get(it, "outOfService");
-            oos = j_oos ? json_boolean_value(j_oos) : true;
+            oos = j_oos ? json_boolean_value(j_oos) : false;
             Multistate_Output_Out_Of_Service_Set(inst, oos);
-            printf("  Out_Of_Service = %s (simulated actuator)\n", oos ? "true" : "false");
+            printf("  Out_Of_Service = %s\n", oos ? "true" : "false");
         }
         else if (strcmp(typ, "multi-state-value") == 0) {
             json_t *state_texts;
@@ -3310,11 +3311,11 @@ static int handle_socket_line(const char *line)
             }
         }
         
-        jval = json_object_get(root, "maxApduLength");
+        jval = json_object_get(root, "apduTimeout");
         if (jval && json_is_integer(jval)) {
-            uint32_t max_apdu = (uint32_t)json_integer_value(jval);
-            if (max_apdu >= 50 && max_apdu <= 65535) {
-                Device_Set_Max_APDU_Length_Accepted(max_apdu);
+            uint16_t timeout = (uint16_t)json_integer_value(jval);
+            if (timeout > 0 && timeout <= 65535) {
+                apdu_timeout_set(timeout);
                 changed++;
             }
         }
@@ -3323,7 +3324,7 @@ static int handle_socket_line(const char *line)
         if (jval && json_is_integer(jval)) {
             uint8_t retries = (uint8_t)json_integer_value(jval);
             if (retries <= 255) {
-                Device_Set_Number_Of_APDU_Retries(retries);
+                apdu_retries_set(retries);
                 changed++;
             }
         }
@@ -3343,15 +3344,14 @@ static int handle_socket_line(const char *line)
         char buf[1024];
         const char *desc = Device_Description();
         const char *loc = Device_Location();
-        uint32_t max_apdu = Device_Max_APDU_Length_Accepted();
-        uint8_t retries = Device_Number_Of_APDU_Retries();
         
         snprintf(buf, sizeof(buf),
-                 "{\"description\":\"%s\",\"location\":\"%s\",\"maxApduLength\":%u,\"apduRetries\":%u}\n",
+                 "{\"description\":\"%s\",\"location\":\"%s\",\"maxApduLength\":%u,\"apduTimeout\":%u,\"apduRetries\":%u}\n",
                  desc ? desc : "",
                  loc ? loc : "",
-                 max_apdu,
-                 retries);
+                 (unsigned int)MAX_APDU,
+                 (unsigned int)apdu_timeout(),
+                 (unsigned int)apdu_retries());
         write(g_client_fd, buf, strlen(buf));
         return 0;
     }
