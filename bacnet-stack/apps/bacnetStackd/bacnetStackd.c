@@ -2007,11 +2007,18 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
                 printf("  No weeklySchedule configured (will use defaultValue)\n");
             }
             
-            json_t *obj_prop_refs = json_object_get(it, "objectPropertyReferences");
-            if (json_is_array(obj_prop_refs)) {
+            {
+                json_t *obj_prop_refs;
                 size_t ref_idx;
-                size_t num_refs = json_array_size(obj_prop_refs);
-                printf("  Configuring %zu object property reference(s)...\n", num_refs);
+                size_t num_refs;
+                
+                obj_prop_refs = json_object_get(it, "objectPropertyReferences");
+                if (!json_is_array(obj_prop_refs)) {
+                    goto skip_obj_prop_refs;
+                }
+                
+                num_refs = json_array_size(obj_prop_refs);
+                printf("  Configuring %u object property reference(s)...\n", (unsigned int)num_refs);
                 
                 for (ref_idx = 0; ref_idx < num_refs && ref_idx < BACNET_SCHEDULE_OBJ_PROP_REF_SIZE; ref_idx++) {
                     json_t *ref = json_array_get(obj_prop_refs, ref_idx);
@@ -2054,18 +2061,18 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
                                 if (desc) {
                                     desc->obj_prop_ref_cnt = ref_idx + 1;
                                 }
-                                printf("    [%zu] %s:%u.%s\n", ref_idx, obj_type_str, target_inst, prop_str);
+                                printf("    [%u] %s:%u.%s\n", (unsigned int)ref_idx, obj_type_str, target_inst, prop_str);
                             } else {
-                                printf("    [%zu] Failed to set reference\n", ref_idx);
+                                printf("    [%u] Failed to set reference\n", (unsigned int)ref_idx);
                             }
                         } else {
-                            printf("    [%zu] Unknown objectType '%s' or property '%s'\n", 
-                                ref_idx, obj_type_str, prop_str);
+                            printf("    [%u] Unknown objectType '%s' or property '%s'\n", 
+                                (unsigned int)ref_idx, obj_type_str, prop_str);
                         }
                     }
                 }
             }
-            
+skip_obj_prop_refs:
             printf("  Schedule %u configuration complete\n", inst);
             
             desc = Schedule_Object(inst);
@@ -3312,8 +3319,8 @@ if (strcmp(cmd, "trendlog-force-log") == 0) {
                 
                 char response[256];
                 snprintf(response, sizeof(response), 
-                        "OK: TL[%u] forced - RecordCount: %lu → %lu\n",
-                        instance, old_count, info->ulRecordCount);
+                        "OK: TL[%u] forced - RecordCount: %u → %u\n",
+                        instance, (unsigned int)old_count, (unsigned int)info->ulRecordCount);
                 write(g_client_fd, response, strlen(response));
             } else {
                 write(g_client_fd, "ERR: Cannot get log info\n", 26);
@@ -3719,16 +3726,12 @@ int main(int argc, char *argv[])
                             
                             if (obj_type == OBJECT_BINARY_VALUE && ref->propertyIdentifier == PROP_PRESENT_VALUE) {
                                 if (desc->Present_Value.tag == BACNET_APPLICATION_TAG_BOOLEAN) {
-                                    Binary_Value_Present_Value_Set(obj_inst, desc->Present_Value.type.Boolean, prio);
-                                } else if (desc->Present_Value.tag == BACNET_APPLICATION_TAG_NULL) {
-                                    Binary_Value_Present_Value_Relinquish(obj_inst, prio);
+                                    Binary_Value_Present_Value_Set(obj_inst, desc->Present_Value.type.Boolean ? BINARY_ACTIVE : BINARY_INACTIVE);
                                 }
                             }
                             else if (obj_type == OBJECT_ANALOG_VALUE && ref->propertyIdentifier == PROP_PRESENT_VALUE) {
                                 if (desc->Present_Value.tag == BACNET_APPLICATION_TAG_REAL) {
                                     Analog_Value_Present_Value_Set(obj_inst, desc->Present_Value.type.Real, prio);
-                                } else if (desc->Present_Value.tag == BACNET_APPLICATION_TAG_NULL) {
-                                    Analog_Value_Present_Value_Relinquish(obj_inst, prio);
                                 }
                             }
                             else if (obj_type == OBJECT_MULTI_STATE_VALUE && ref->propertyIdentifier == PROP_PRESENT_VALUE) {
@@ -3766,9 +3769,9 @@ int main(int argc, char *argv[])
                 if (info) {  
                     printf("TL[%u]:\n", instance);
                     printf("  Enabled: %s\n", enabled ? "YES" : "NO");
-                    printf("  RecordCount: %lu\n", info->ulRecordCount);
-                    printf("  LogInterval: %lu cs (= %lu seconds)\n", 
-                        info->ulLogInterval, info->ulLogInterval / 100);
+                    printf("  RecordCount: %u\n", (unsigned int)info->ulRecordCount);
+                    printf("  LogInterval: %u cs (= %u seconds)\n", 
+                        (unsigned int)info->ulLogInterval, (unsigned int)(info->ulLogInterval / 100));
                     printf("  tLastDataTime: %ld\n", (long)info->tLastDataTime);
                     printf("  Time since last log: %ld seconds\n", 
                         (long)(now - info->tLastDataTime));
