@@ -1659,7 +1659,11 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
             if (json_is_integer(jpv)) {
                 Binary_Input_Present_Value_Set(inst, (BACNET_BINARY_PV)json_integer_value(jpv));
             }
-            Binary_Input_Out_Of_Service_Set(inst, true);
+            
+            j_oos = json_object_get(it, "outOfService");
+            oos = j_oos ? json_boolean_value(j_oos) : true;
+            Binary_Input_Out_Of_Service_Set(inst, oos);
+            printf("  Out_Of_Service = %s (simulated sensor)\n", oos ? "true" : "false");
         }
         else if (strcmp(typ, "binary-output") == 0) {
             bool exists;
@@ -1687,7 +1691,11 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
             if (json_is_integer(jpv)) {
                 Binary_Output_Present_Value_Set(inst, (BACNET_BINARY_PV)json_integer_value(jpv), BACNET_MAX_PRIORITY);
             }
-            Binary_Output_Out_Of_Service_Set(inst, true);
+            
+            j_oos = json_object_get(it, "outOfService");
+            oos = j_oos ? json_boolean_value(j_oos) : true;
+            Binary_Output_Out_Of_Service_Set(inst, oos);
+            printf("  Out_Of_Service = %s (simulated actuator)\n", oos ? "true" : "false");
         }
         else if (strcmp(typ, "binary-value") == 0) {
             bool exists;
@@ -1715,7 +1723,11 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
             if (json_is_integer(jpv)) {
                 Binary_Value_Present_Value_Set(inst, (BACNET_BINARY_PV)json_integer_value(jpv));
             }
-            Binary_Value_Out_Of_Service_Set(inst, true);
+            
+            j_oos = json_object_get(it, "outOfService");
+            oos = j_oos ? json_boolean_value(j_oos) : false;
+            Binary_Value_Out_Of_Service_Set(inst, oos);
+            printf("  Out_Of_Service = %s\n", oos ? "true" : "false");
         }
         else if (strcmp(typ, "multi-state-input") == 0) {
             json_t *state_texts;
@@ -1752,7 +1764,11 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
                     Multistate_Input_State_Text_List_Set(inst, state_text_string);
                 }
             }
-            Multistate_Input_Out_Of_Service_Set(inst, true);
+            
+            j_oos = json_object_get(it, "outOfService");
+            oos = j_oos ? json_boolean_value(j_oos) : true;
+            Multistate_Input_Out_Of_Service_Set(inst, oos);
+            printf("  Out_Of_Service = %s (simulated sensor)\n", oos ? "true" : "false");
         }
         else if (strcmp(typ, "multi-state-output") == 0) {
             json_t *state_texts;
@@ -1789,7 +1805,11 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
                     Multistate_Output_State_Text_List_Set(inst, state_text_string);
                 }
             }
-            Multistate_Output_Out_Of_Service_Set(inst, true);
+            
+            j_oos = json_object_get(it, "outOfService");
+            oos = j_oos ? json_boolean_value(j_oos) : true;
+            Multistate_Output_Out_Of_Service_Set(inst, oos);
+            printf("  Out_Of_Service = %s (simulated actuator)\n", oos ? "true" : "false");
         }
         else if (strcmp(typ, "multi-state-value") == 0) {
             json_t *state_texts;
@@ -1826,7 +1846,11 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
                     Multistate_Value_State_Text_List_Set(inst, state_text_string);
                 }
             }
-            Multistate_Value_Out_Of_Service_Set(inst, true);
+            
+            j_oos = json_object_get(it, "outOfService");
+            oos = j_oos ? json_boolean_value(j_oos) : false;
+            Multistate_Value_Out_Of_Service_Set(inst, oos);
+            printf("  Out_Of_Service = %s\n", oos ? "true" : "false");
         }
         else if (strcmp(typ, "schedule") == 0) {
             bool exists;
@@ -2034,14 +2058,16 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
                         
                         if (strcmp(obj_type_str, "binary-value") == 0) {
                             obj_type = OBJECT_BINARY_VALUE;
-                        } else if (strcmp(obj_type_str, "analog-value") == 0) {
-                            obj_type = OBJECT_ANALOG_VALUE;
-                        } else if (strcmp(obj_type_str, "multi-state-value") == 0) {
-                            obj_type = OBJECT_MULTI_STATE_VALUE;
                         } else if (strcmp(obj_type_str, "binary-output") == 0) {
                             obj_type = OBJECT_BINARY_OUTPUT;
+                        } else if (strcmp(obj_type_str, "analog-value") == 0) {
+                            obj_type = OBJECT_ANALOG_VALUE;
                         } else if (strcmp(obj_type_str, "analog-output") == 0) {
                             obj_type = OBJECT_ANALOG_OUTPUT;
+                        } else if (strcmp(obj_type_str, "multi-state-value") == 0) {
+                            obj_type = OBJECT_MULTI_STATE_VALUE;
+                        } else if (strcmp(obj_type_str, "multi-state-output") == 0) {
+                            obj_type = OBJECT_MULTI_STATE_OUTPUT;
                         }
                         
                         if (strcmp(prop_str, "present-value") == 0) {
@@ -3253,6 +3279,83 @@ static int handle_socket_line(const char *line)
         return 0;
     }
     
+    if (strncmp(line, "SET_DEVICE_INFO ", 16) == 0) {
+        json_error_t jerr;
+        json_t *root;
+        json_t *jval;
+        const char *json_str = line + 16;
+        char response[256];
+        int changed = 0;
+        
+        root = json_loads(json_str, 0, &jerr);
+        if (!root) {
+            snprintf(response, sizeof(response), "ERR: JSON parse error at line %d: %s\n", jerr.line, jerr.text);
+            write(g_client_fd, response, strlen(response));
+            return 0;
+        }
+        
+        jval = json_object_get(root, "description");
+        if (jval && json_is_string(jval)) {
+            const char *desc = json_string_value(jval);
+            if (Device_Set_Description(desc, strlen(desc))) {
+                changed++;
+            }
+        }
+        
+        jval = json_object_get(root, "location");
+        if (jval && json_is_string(jval)) {
+            const char *loc = json_string_value(jval);
+            if (Device_Set_Location(loc, strlen(loc))) {
+                changed++;
+            }
+        }
+        
+        jval = json_object_get(root, "maxApduLength");
+        if (jval && json_is_integer(jval)) {
+            uint32_t max_apdu = (uint32_t)json_integer_value(jval);
+            if (max_apdu >= 50 && max_apdu <= 65535) {
+                Device_Set_Max_APDU_Length_Accepted(max_apdu);
+                changed++;
+            }
+        }
+        
+        jval = json_object_get(root, "apduRetries");
+        if (jval && json_is_integer(jval)) {
+            uint8_t retries = (uint8_t)json_integer_value(jval);
+            if (retries <= 255) {
+                Device_Set_Number_Of_APDU_Retries(retries);
+                changed++;
+            }
+        }
+        
+        json_decref(root);
+        
+        if (changed > 0) {
+            snprintf(response, sizeof(response), "OK: %d device properties updated\n", changed);
+            write(g_client_fd, response, strlen(response));
+        } else {
+            write(g_client_fd, "OK: No properties changed\n", 26);
+        }
+        return 0;
+    }
+    
+    if (strncmp(line, "GET_DEVICE_INFO", 15) == 0) {
+        char buf[1024];
+        const char *desc = Device_Description();
+        const char *loc = Device_Location();
+        uint32_t max_apdu = Device_Max_APDU_Length_Accepted();
+        uint8_t retries = Device_Number_Of_APDU_Retries();
+        
+        snprintf(buf, sizeof(buf),
+                 "{\"description\":\"%s\",\"location\":\"%s\",\"maxApduLength\":%u,\"apduRetries\":%u}\n",
+                 desc ? desc : "",
+                 loc ? loc : "",
+                 max_apdu,
+                 retries);
+        write(g_client_fd, buf, strlen(buf));
+        return 0;
+    }
+    
     if (strcmp(cmd, "trendlogs") == 0) {
         handle_cmd_trendlogs();
         return 0;
@@ -3724,14 +3827,37 @@ int main(int argc, char *argv[])
                             uint32_t obj_inst = ref->objectIdentifier.instance;
                             uint8_t prio = desc->Priority_For_Writing;
                             
-                            if (obj_type == OBJECT_BINARY_VALUE && ref->propertyIdentifier == PROP_PRESENT_VALUE) {
+                            if (obj_type == OBJECT_BINARY_OUTPUT && ref->propertyIdentifier == PROP_PRESENT_VALUE) {
+                                if (desc->Present_Value.tag == BACNET_APPLICATION_TAG_BOOLEAN) {
+                                    Binary_Output_Present_Value_Set(obj_inst, desc->Present_Value.type.Boolean ? BINARY_ACTIVE : BINARY_INACTIVE, prio);
+                                } else if (desc->Present_Value.tag == BACNET_APPLICATION_TAG_NULL) {
+                                    Binary_Output_Present_Value_Relinquish(obj_inst, prio);
+                                }
+                            }
+                            else if (obj_type == OBJECT_BINARY_VALUE && ref->propertyIdentifier == PROP_PRESENT_VALUE) {
                                 if (desc->Present_Value.tag == BACNET_APPLICATION_TAG_BOOLEAN) {
                                     Binary_Value_Present_Value_Set(obj_inst, desc->Present_Value.type.Boolean ? BINARY_ACTIVE : BINARY_INACTIVE);
+                                }
+                            }
+                            else if (obj_type == OBJECT_ANALOG_OUTPUT && ref->propertyIdentifier == PROP_PRESENT_VALUE) {
+                                if (desc->Present_Value.tag == BACNET_APPLICATION_TAG_REAL) {
+                                    Analog_Output_Present_Value_Set(obj_inst, desc->Present_Value.type.Real, prio);
+                                } else if (desc->Present_Value.tag == BACNET_APPLICATION_TAG_NULL) {
+                                    Analog_Output_Present_Value_Relinquish(obj_inst, prio);
                                 }
                             }
                             else if (obj_type == OBJECT_ANALOG_VALUE && ref->propertyIdentifier == PROP_PRESENT_VALUE) {
                                 if (desc->Present_Value.tag == BACNET_APPLICATION_TAG_REAL) {
                                     Analog_Value_Present_Value_Set(obj_inst, desc->Present_Value.type.Real, prio);
+                                }
+                            }
+                            else if (obj_type == OBJECT_MULTI_STATE_OUTPUT && ref->propertyIdentifier == PROP_PRESENT_VALUE) {
+                                if (desc->Present_Value.tag == BACNET_APPLICATION_TAG_ENUMERATED ||
+                                    desc->Present_Value.tag == BACNET_APPLICATION_TAG_UNSIGNED_INT) {
+                                    uint32_t val = (desc->Present_Value.tag == BACNET_APPLICATION_TAG_ENUMERATED) ?
+                                        desc->Present_Value.type.Enumerated :
+                                        desc->Present_Value.type.Unsigned_Int;
+                                    Multistate_Output_Present_Value_Set(obj_inst, val, prio);
                                 }
                             }
                             else if (obj_type == OBJECT_MULTI_STATE_VALUE && ref->propertyIdentifier == PROP_PRESENT_VALUE) {
