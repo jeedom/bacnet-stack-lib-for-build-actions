@@ -400,10 +400,9 @@ int Trend_Log_Read_Property(BACNET_READ_PROPERTY_DATA *rpdata)
             break;
 
         case PROP_LOG_INTERVAL:
-            /* We only log to 1 sec accuracy so must multiply by 100 before
-             * passing it on */
+            /* ulLogInterval is already in centiseconds, no conversion needed */
             apdu_len += encode_application_unsigned(
-                &apdu[0], CurrentLog->ulLogInterval * 100);
+                &apdu[0], CurrentLog->ulLogInterval);
             break;
 
         case PROP_ALIGN_INTERVALS:
@@ -412,10 +411,9 @@ int Trend_Log_Read_Property(BACNET_READ_PROPERTY_DATA *rpdata)
             break;
 
         case PROP_INTERVAL_OFFSET:
-            /* We only log to 1 sec accuracy so must multiply by 100 before
-             * passing it on */
+            /* ulIntervalOffset is already in centiseconds, no conversion needed */
             apdu_len += encode_application_unsigned(
-                &apdu[0], CurrentLog->ulIntervalOffset * 100);
+                &apdu[0], CurrentLog->ulIntervalOffset);
             break;
 
         case PROP_TRIGGER:
@@ -739,12 +737,11 @@ bool Trend_Log_Write_Property(BACNET_WRITE_PROPERTY_DATA *wp_data)
                         ERROR_CODE_OPTIONAL_FUNCTIONALITY_NOT_SUPPORTED;
                     status = false;
                 } else {
-                    /* We only log to 1 sec accuracy so must divide by 100
-                     * before passing it on */
-                    CurrentLog->ulLogInterval = value.type.Unsigned_Int / 100;
+                    /* Store interval in centiseconds (BACnet native unit) */
+                    CurrentLog->ulLogInterval = value.type.Unsigned_Int;
                     if (0 == CurrentLog->ulLogInterval) {
                         CurrentLog->ulLogInterval =
-                            1; /* Interval of 0 is not a good idea */
+                            100; /* Minimum 1 second = 100 centiseconds */
                     }
                 }
             }
@@ -759,12 +756,11 @@ bool Trend_Log_Write_Property(BACNET_WRITE_PROPERTY_DATA *wp_data)
             break;
 
         case PROP_INTERVAL_OFFSET:
-            /* We only log to 1 sec accuracy so must divide by 100 before
-             * passing it on */
+            /* Store offset in centiseconds (BACnet native unit) */
             status = write_property_type_valid(
                 wp_data, &value, BACNET_APPLICATION_TAG_UNSIGNED_INT);
             if (status) {
-                CurrentLog->ulIntervalOffset = value.type.Unsigned_Int / 100;
+                CurrentLog->ulIntervalOffset = value.type.Unsigned_Int;
             }
             break;
 

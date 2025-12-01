@@ -1361,14 +1361,21 @@ bool Device_Object_Name_Copy(
 
 static void Update_Current_Time(void)
 {
-    datetime_local(
+    bool result = datetime_local(
         &Local_Date, &Local_Time, &UTC_Offset, &Daylight_Savings_Status);
     
-    /* DEBUG */
-    printf("DEBUG Update_Current_Time: %04d-%02d-%02d %02d:%02d:%02d (UTC offset: %d)\n",
-           Local_Date.year, Local_Date.month, Local_Date.day,
-           Local_Time.hour, Local_Time.min, Local_Time.sec,
-           UTC_Offset);
+    /* DEBUG EXTENDED */
+    printf("╔════════════════════════════════════════════════════════════╗\n");
+    printf("║ DEBUG Update_Current_Time()                               ║\n");
+    printf("╠════════════════════════════════════════════════════════════╣\n");
+    printf("║ datetime_local() returned: %s                            ║\n", result ? "TRUE " : "FALSE");
+    printf("║ Local_Date.year   = %u (should be 2025)                 ║\n", Local_Date.year);
+    printf("║ Local_Date.month  = %u                                    ║\n", Local_Date.month);
+    printf("║ Local_Date.day    = %u                                    ║\n", Local_Date.day);
+    printf("║ Local_Time: %02d:%02d:%02d                                ║\n",
+           Local_Time.hour, Local_Time.min, Local_Time.sec);
+    printf("║ UTC_Offset = %d minutes                                   ║\n", UTC_Offset);
+    printf("╚════════════════════════════════════════════════════════════╝\n");
 }
 
 void Device_getCurrentDateTime(BACNET_DATE_TIME *DateTime)
