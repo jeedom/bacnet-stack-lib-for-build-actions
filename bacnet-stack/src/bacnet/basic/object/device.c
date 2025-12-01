@@ -1362,21 +1362,8 @@ bool Device_Object_Name_Copy(
 
 static void Update_Current_Time(void)
 {
-    bool result = datetime_local(
+    datetime_local(
         &Local_Date, &Local_Time, &UTC_Offset, &Daylight_Savings_Status);
-    
-    /* DEBUG EXTENDED */
-    printf("╔════════════════════════════════════════════════════════════╗\n");
-    printf("║ DEBUG Update_Current_Time()                               ║\n");
-    printf("╠════════════════════════════════════════════════════════════╣\n");
-    printf("║ datetime_local() returned: %s                            ║\n", result ? "TRUE " : "FALSE");
-    printf("║ Local_Date.year   = %u (should be 2025)                 ║\n", Local_Date.year);
-    printf("║ Local_Date.month  = %u                                    ║\n", Local_Date.month);
-    printf("║ Local_Date.day    = %u                                    ║\n", Local_Date.day);
-    printf("║ Local_Time: %02d:%02d:%02d                                ║\n",
-           Local_Time.hour, Local_Time.min, Local_Time.sec);
-    printf("║ UTC_Offset = %d minutes                                   ║\n", UTC_Offset);
-    printf("╚════════════════════════════════════════════════════════════╝\n");
 }
 
 void Device_getCurrentDateTime(BACNET_DATE_TIME *DateTime)
@@ -2461,57 +2448,12 @@ bool Device_Value_List_Supported(BACNET_OBJECT_TYPE object_type)
 void Device_Init(object_functions_t *object_table)
 {
     struct object_functions *pObject = NULL;
-    bool datetime_result = false;
-    time_t raw_time;
-    struct tm *time_info;
-    
-    printf("\n");
-    printf("╔════════════════════════════════════════════════════════════╗\n");
-    printf("║ Device_Init() STARTING                                     ║\n");
-    printf("╚════════════════════════════════════════════════════════════╝\n");
-    
-    /* CRITICAL: Check system time FIRST */
-    raw_time = time(NULL);
-    printf("⏰ SYSTEM TIME CHECK:\n");
-    printf("   time(NULL) = %ld seconds since epoch\n", (long)raw_time);
-    
-    if (raw_time < 1000000) {
-        printf("   ❌ WARNING: System time is WRONG! (< 1M seconds)\n");
-        printf("   ❌ This means system clock is NOT set correctly!\n");
-        printf("   ❌ Expected: ~1733000000 (Dec 2025)\n");
-        printf("   ❌ Got:      %ld\n", (long)raw_time);
-    } else {
-        time_info = localtime(&raw_time);
-        if (time_info) {
-            printf("   ✓ System time appears valid:\n");
-            printf("     %04d-%02d-%02d %02d:%02d:%02d\n",
-                   time_info->tm_year + 1900,
-                   time_info->tm_mon + 1,
-                   time_info->tm_mday,
-                   time_info->tm_hour,
-                   time_info->tm_min,
-                   time_info->tm_sec);
-        }
-    }
     
     characterstring_init_ansi(&My_Object_Name, "SimpleServer");
     datetime_init();
-    
-    printf("→ Calling datetime_local() to initialize Local_Date/Time...\n");
     /* Initialize Local_Date and Local_Time with current date/time */
-    datetime_result = datetime_local(
+    datetime_local(
         &Local_Date, &Local_Time, &UTC_Offset, &Daylight_Savings_Status);
-    
-    printf("╔════════════════════════════════════════════════════════════╗\n");
-    printf("║ Device_Init() - datetime_local() result                    ║\n");
-    printf("╠════════════════════════════════════════════════════════════╣\n");
-    printf("║ Result: %s                                                ║\n", datetime_result ? "SUCCESS" : "FAILED ");
-    printf("║ Local_Date.year  = %u (expected: 2025)                   ║\n", Local_Date.year);
-    printf("║ Local_Date.month = %u                                     ║\n", Local_Date.month);
-    printf("║ Local_Date.day   = %u                                     ║\n", Local_Date.day);
-    printf("║ Local_Time: %02d:%02d:%02d                                 ║\n",
-           Local_Time.hour, Local_Time.min, Local_Time.sec);
-    printf("╚════════════════════════════════════════════════════════════╝\n");
     if (object_table) {
         Object_Table = object_table;
     } else {
