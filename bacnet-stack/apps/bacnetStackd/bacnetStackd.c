@@ -2007,6 +2007,65 @@ static int apply_config_from_json(const char *json_text, bool full_reset)
                 printf("  No weeklySchedule configured (will use defaultValue)\n");
             }
             
+            json_t *obj_prop_refs = json_object_get(it, "objectPropertyReferences");
+            if (json_is_array(obj_prop_refs)) {
+                size_t ref_idx;
+                size_t num_refs = json_array_size(obj_prop_refs);
+                printf("  Configuring %zu object property reference(s)...\n", num_refs);
+                
+                for (ref_idx = 0; ref_idx < num_refs && ref_idx < BACNET_SCHEDULE_OBJ_PROP_REF_SIZE; ref_idx++) {
+                    json_t *ref = json_array_get(obj_prop_refs, ref_idx);
+                    const char *obj_type_str = json_string_value(json_object_get(ref, "objectType"));
+                    json_t *obj_inst = json_object_get(ref, "instance");
+                    const char *prop_str = json_string_value(json_object_get(ref, "property"));
+                    
+                    if (obj_type_str && json_is_integer(obj_inst) && prop_str) {
+                        BACNET_DEVICE_OBJECT_PROPERTY_REFERENCE dev_obj_prop_ref;
+                        BACNET_OBJECT_TYPE obj_type = OBJECT_NONE;
+                        BACNET_PROPERTY_ID prop_id = MAX_BACNET_PROPERTY_ID;
+                        uint32_t target_inst = (uint32_t)json_integer_value(obj_inst);
+                        
+                        if (strcmp(obj_type_str, "binary-value") == 0) {
+                            obj_type = OBJECT_BINARY_VALUE;
+                        } else if (strcmp(obj_type_str, "analog-value") == 0) {
+                            obj_type = OBJECT_ANALOG_VALUE;
+                        } else if (strcmp(obj_type_str, "multi-state-value") == 0) {
+                            obj_type = OBJECT_MULTI_STATE_VALUE;
+                        } else if (strcmp(obj_type_str, "binary-output") == 0) {
+                            obj_type = OBJECT_BINARY_OUTPUT;
+                        } else if (strcmp(obj_type_str, "analog-output") == 0) {
+                            obj_type = OBJECT_ANALOG_OUTPUT;
+                        }
+                        
+                        if (strcmp(prop_str, "present-value") == 0) {
+                            prop_id = PROP_PRESENT_VALUE;
+                        }
+                        
+                        if (obj_type != OBJECT_NONE && prop_id != MAX_BACNET_PROPERTY_ID) {
+                            dev_obj_prop_ref.deviceIdentifier.type = OBJECT_DEVICE;
+                            dev_obj_prop_ref.deviceIdentifier.instance = Device_Object_Instance_Number();
+                            dev_obj_prop_ref.objectIdentifier.type = obj_type;
+                            dev_obj_prop_ref.objectIdentifier.instance = target_inst;
+                            dev_obj_prop_ref.propertyIdentifier = prop_id;
+                            dev_obj_prop_ref.arrayIndex = BACNET_ARRAY_ALL;
+                            
+                            if (Schedule_List_Of_Object_Property_References_Set(inst, ref_idx, &dev_obj_prop_ref)) {
+                                desc = Schedule_Object(inst);
+                                if (desc) {
+                                    desc->obj_prop_ref_cnt = ref_idx + 1;
+                                }
+                                printf("    [%zu] %s:%u.%s\n", ref_idx, obj_type_str, target_inst, prop_str);
+                            } else {
+                                printf("    [%zu] Failed to set reference\n", ref_idx);
+                            }
+                        } else {
+                            printf("    [%zu] Unknown objectType '%s' or property '%s'\n", 
+                                ref_idx, obj_type_str, prop_str);
+                        }
+                    }
+                }
+            }
+            
             printf("  Schedule %u configuration complete\n", inst);
             
             desc = Schedule_Object(inst);
@@ -3643,8 +3702,46 @@ int main(int argc, char *argv[])
             for (i = 0; i < sc_count; i++) {
                 uint32_t inst = Schedule_Index_To_Instance(i);
                 SCHEDULE_DESCR *desc = Schedule_Object(inst);
-                if (desc) {
+                if (desc && !desc->Out_Of_Service) {
+                    BACNET_APPLICATION_DATA_VALUE old_pv;
+                    unsigned ref_idx;
+                    
+                    memcpy(&old_pv, &desc->Present_Value, sizeof(BACNET_APPLICATION_DATA_VALUE));
+                    
                     Schedule_Recalculate_PV(desc, wday, &time_of_day);
+                    
+                    if (memcmp(&old_pv, &desc->Present_Value, sizeof(BACNET_APPLICATION_DATA_VALUE)) != 0) {
+                        for (ref_idx = 0; ref_idx < desc->obj_prop_ref_cnt; ref_idx++) {
+                            BACNET_DEVICE_OBJECT_PROPERTY_REFERENCE *ref = &desc->Object_Property_References[ref_idx];
+                            BACNET_OBJECT_TYPE obj_type = ref->objectIdentifier.type;
+                            uint32_t obj_inst = ref->objectIdentifier.instance;
+                            uint8_t prio = desc->Priority_For_Writing;
+                            
+                            if (obj_type == OBJECT_BINARY_VALUE && ref->propertyIdentifier == PROP_PRESENT_VALUE) {
+                                if (desc->Present_Value.tag == BACNET_APPLICATION_TAG_BOOLEAN) {
+                                    Binary_Value_Present_Value_Set(obj_inst, desc->Present_Value.type.Boolean, prio);
+                                } else if (desc->Present_Value.tag == BACNET_APPLICATION_TAG_NULL) {
+                                    Binary_Value_Present_Value_Relinquish(obj_inst, prio);
+                                }
+                            }
+                            else if (obj_type == OBJECT_ANALOG_VALUE && ref->propertyIdentifier == PROP_PRESENT_VALUE) {
+                                if (desc->Present_Value.tag == BACNET_APPLICATION_TAG_REAL) {
+                                    Analog_Value_Present_Value_Set(obj_inst, desc->Present_Value.type.Real, prio);
+                                } else if (desc->Present_Value.tag == BACNET_APPLICATION_TAG_NULL) {
+                                    Analog_Value_Present_Value_Relinquish(obj_inst, prio);
+                                }
+                            }
+                            else if (obj_type == OBJECT_MULTI_STATE_VALUE && ref->propertyIdentifier == PROP_PRESENT_VALUE) {
+                                if (desc->Present_Value.tag == BACNET_APPLICATION_TAG_ENUMERATED ||
+                                    desc->Present_Value.tag == BACNET_APPLICATION_TAG_UNSIGNED_INT) {
+                                    uint32_t val = (desc->Present_Value.tag == BACNET_APPLICATION_TAG_ENUMERATED) ?
+                                        desc->Present_Value.type.Enumerated :
+                                        desc->Present_Value.type.Unsigned_Int;
+                                    Multistate_Value_Present_Value_Set(obj_inst, val);
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
