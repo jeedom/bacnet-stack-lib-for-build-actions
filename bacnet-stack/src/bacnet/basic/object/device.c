@@ -2460,11 +2460,31 @@ bool Device_Value_List_Supported(BACNET_OBJECT_TYPE object_type)
 void Device_Init(object_functions_t *object_table)
 {
     struct object_functions *pObject = NULL;
+    bool datetime_result = false;
+    
+    printf("\n");
+    printf("╔════════════════════════════════════════════════════════════╗\n");
+    printf("║ Device_Init() STARTING                                     ║\n");
+    printf("╚════════════════════════════════════════════════════════════╝\n");
+    
     characterstring_init_ansi(&My_Object_Name, "SimpleServer");
     datetime_init();
+    
+    printf("→ Calling datetime_local() to initialize Local_Date/Time...\n");
     /* Initialize Local_Date and Local_Time with current date/time */
-    datetime_local(
+    datetime_result = datetime_local(
         &Local_Date, &Local_Time, &UTC_Offset, &Daylight_Savings_Status);
+    
+    printf("╔════════════════════════════════════════════════════════════╗\n");
+    printf("║ Device_Init() - datetime_local() result                    ║\n");
+    printf("╠════════════════════════════════════════════════════════════╣\n");
+    printf("║ Result: %s                                                ║\n", datetime_result ? "SUCCESS" : "FAILED ");
+    printf("║ Local_Date.year  = %u (expected: 2025)                   ║\n", Local_Date.year);
+    printf("║ Local_Date.month = %u                                     ║\n", Local_Date.month);
+    printf("║ Local_Date.day   = %u                                     ║\n", Local_Date.day);
+    printf("║ Local_Time: %02d:%02d:%02d                                 ║\n",
+           Local_Time.hour, Local_Time.min, Local_Time.sec);
+    printf("╚════════════════════════════════════════════════════════════╝\n");
     if (object_table) {
         Object_Table = object_table;
     } else {

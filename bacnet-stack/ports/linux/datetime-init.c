@@ -86,13 +86,39 @@ bool datetime_local(
     struct tm *tblock = NULL;
     struct timeval tv;
     int32_t to;
+    time_t raw_time;
 
+    printf("\n🔍 DEBUG datetime_local() ENTRY\n");
+    
     if (gettimeofday(&tv, NULL) == 0) {
+        printf("  gettimeofday() OK: tv_sec=%ld tv_usec=%ld\n", 
+               (long)tv.tv_sec, (long)tv.tv_usec);
+        
         to = Time_Offset;
+        printf("  Time_Offset=%d\n", to);
+        
         tv.tv_sec += (int)to / 1000;
         tv.tv_usec += (to % 1000) * 1000;
-        tblock = (struct tm *)localtime((const time_t *)&tv.tv_sec);
+        
+        printf("  After offset: tv_sec=%ld\n", (long)tv.tv_sec);
+        
+        raw_time = tv.tv_sec;
+        tblock = (struct tm *)localtime(&raw_time);
+        
+        if (tblock) {
+            printf("  localtime() OK:\n");
+            printf("    tm_year=%d (years since 1900)\n", tblock->tm_year);
+            printf("    tm_mon=%d (0-11)\n", tblock->tm_mon);
+            printf("    tm_mday=%d\n", tblock->tm_mday);
+            printf("    tm_hour=%d tm_min=%d tm_sec=%d\n",
+                   tblock->tm_hour, tblock->tm_min, tblock->tm_sec);
+        } else {
+            printf("  ❌ localtime() returned NULL!\n");
+        }
+    } else {
+        printf("  ❌ gettimeofday() FAILED!\n");
     }
+    
     if (tblock) {
         status = true;
         /** struct tm
@@ -106,12 +132,19 @@ bool datetime_local(
          *   int    tm_yday  Day of year [0,365].
          *   int    tm_isdst Daylight Savings flag.
          */
+        uint16_t year_value = (uint16_t)tblock->tm_year + 1900;
+        printf("  Computing year: tm_year(%d) + 1900 = %u\n", 
+               tblock->tm_year, year_value);
+        
         datetime_set_date(
-            bdate, (uint16_t)tblock->tm_year + 1900,
+            bdate, year_value,
             (uint8_t)tblock->tm_mon + 1, (uint8_t)tblock->tm_mday);
         datetime_set_time(
             btime, (uint8_t)tblock->tm_hour, (uint8_t)tblock->tm_min,
             (uint8_t)tblock->tm_sec, (uint8_t)(tv.tv_usec / 10000));
+        
+        printf("  After datetime_set_date: bdate->year=%u\n", bdate->year);
+        printf("🔍 DEBUG datetime_local() EXIT\n\n");
         if (dst_active) {
             /* The value of tm_isdst is:
                - positive if Daylight Saving Time is in effect,
