@@ -211,7 +211,8 @@ bool Trendlog_Test_Source_Read(uint32_t instance)
 
 /**
  * @brief Force le recalcul des timestamps pour tous les trendlogs actifs
- * À appeler périodiquement pour corriger les timestamps à 1900
+ * Note: Avec les corrections du bug centisecondes/secondes, cette fonction
+ * n'est normalement plus nécessaire mais conservée pour compatibilité
  */
 void Trendlog_Fix_Timestamps(void)
 {
@@ -227,8 +228,8 @@ void Trendlog_Fix_Timestamps(void)
             TL_LOG_INFO *log_info = Trend_Log_Get_Info(i);
             
             if (log_info != NULL) {
-                /* Mettre à jour tLastDataTime avec le timestamp actuel */
-                log_info->tLastDataTime = current_time;
+                /* Ne plus forcer tLastDataTime - laissé géré par trend_log_timer() */
+                /* log_info->tLastDataTime = current_time; */
                 
                 /* Si ucTimeFlags indique que les dates sont wildcard, les corriger */
                 if (log_info->ucTimeFlags & (TL_T_START_WILD | TL_T_STOP_WILD)) {

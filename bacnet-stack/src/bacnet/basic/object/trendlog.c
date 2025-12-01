@@ -1793,9 +1793,12 @@ void trend_log_timer(uint16_t uSeconds)
                      * CurrentLog->ulLogInterval)) && */
                     /*                   ((tNow - CurrentLog->tLastDataTime)
                      * >= CurrentLog->ulLogInterval)) { */
-                    if ((tNow % CurrentLog->ulLogInterval) ==
-                        (CurrentLog->ulIntervalOffset %
-                         CurrentLog->ulLogInterval)) {
+                    /* Note: ulLogInterval is in centiseconds, we need to convert to seconds */
+                    uint32_t interval_seconds = CurrentLog->ulLogInterval / 100;
+                    uint32_t offset_seconds = CurrentLog->ulIntervalOffset / 100;
+                    
+                    if ((tNow % interval_seconds) ==
+                        (offset_seconds % interval_seconds)) {
                         /* Record value if time synchronised trigger
                          * condition is met and at least one period has
                          * elapsed.
@@ -1803,7 +1806,7 @@ void trend_log_timer(uint16_t uSeconds)
                         TL_fetch_property(iCount);
                     } else if (
                         (tNow - CurrentLog->tLastDataTime) >
-                        CurrentLog->ulLogInterval) {
+                        interval_seconds) {
                         /* Also record value if we have waited more than a
                          * period since the last reading. This ensures we
                          * take a reading as soon as possible after a power
@@ -1814,10 +1817,11 @@ void trend_log_timer(uint16_t uSeconds)
                     }
                 } else if (
                     ((tNow - CurrentLog->tLastDataTime) >=
-                     CurrentLog->ulLogInterval) ||
+                     (CurrentLog->ulLogInterval / 100)) ||
                     (CurrentLog->bTrigger == true)) {
                     /* If not aligned take a reading when we have either
                      * waited long enough or a trigger is set.
+                     * Note: ulLogInterval is in centiseconds, tNow is in seconds
                      */
                     TL_fetch_property(iCount);
                 }
@@ -1863,7 +1867,7 @@ bool Trend_Log_Configure_Direct(
     /* Configuration des paramètres */
     log->LoggingType = LOGGING_TYPE_POLLED;
     log->ulLogInterval = log_interval_seconds * 100; 
-    log->bAlignIntervals = false;
+    log->bAlignIntervals = true;  /* Activé pour une meilleure régularité */
     log->ulIntervalOffset = 0;
     log->bStopWhenFull = false;
     log->bEnable = enable;

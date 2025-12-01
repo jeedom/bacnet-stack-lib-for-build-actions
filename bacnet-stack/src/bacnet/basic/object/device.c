@@ -2455,6 +2455,9 @@ void Device_Init(object_functions_t *object_table)
     struct object_functions *pObject = NULL;
     characterstring_init_ansi(&My_Object_Name, "SimpleServer");
     datetime_init();
+    /* Initialize Local_Date and Local_Time with current date/time */
+    datetime_local(
+        &Local_Date, &Local_Time, &UTC_Offset, &Daylight_Savings_Status);
     if (object_table) {
         Object_Table = object_table;
     } else {
