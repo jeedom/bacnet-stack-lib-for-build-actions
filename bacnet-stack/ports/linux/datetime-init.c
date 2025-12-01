@@ -88,7 +88,13 @@ bool datetime_local(
     int32_t to;
     time_t raw_time;
 
-    printf("\n🔍 DEBUG datetime_local() ENTRY\n");
+    printf("\n");
+    printf("═══════════════════════════════════════════════════════════\n");
+    printf("🔍🔍🔍 INSIDE datetime_local() FROM datetime-init.c 🔍🔍🔍\n");
+    printf("═══════════════════════════════════════════════════════════\n");
+    printf("  bdate pointer = %p\n", (void*)bdate);
+    printf("  btime pointer = %p\n", (void*)btime);
+    printf("\n");
     
     if (gettimeofday(&tv, NULL) == 0) {
         printf("  gettimeofday() OK: tv_sec=%ld tv_usec=%ld\n", 

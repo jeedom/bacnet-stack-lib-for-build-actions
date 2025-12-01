@@ -53,6 +53,9 @@ PORTS_POSIX := $(BACNET_ROOT)/ports/posix
 BACNET_LIB_DIR := $(BACNET_ROOT)/apps/lib
 BACNET_LIB_TARGET := $(BACNET_LIB_DIR)/libbacnet.a
 
+# WORKAROUND: Compile datetime-init.c directly to get debug logs
+SRC += $(PORTS_LINUX)/datetime-init.c
+
 # Compiler flags
 CFLAGS_COMMON := -std=gnu89 -Os -Wall -Wextra -pedantic \
                  -Wno-sign-conversion -Wno-conversion -Wno-sign-compare \
