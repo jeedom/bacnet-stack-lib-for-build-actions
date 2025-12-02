@@ -157,6 +157,15 @@ void handler_read_range(
         if (len <= 0) {
             debug_print("RR: Unable to decode Request!\n");
         }
+        if (len < 0) {
+            /* bad decoding - send an abort */
+            len = abort_encode_apdu(
+                &Handler_Transmit_Buffer[pdu_len], service_data->invoke_id,
+                ABORT_REASON_OTHER, true);
+            debug_print("RR: Bad Encoding.  Sending Abort!\n");
+        } else {
+            /* assume that there is an error */
+            error = true;
             data.application_data = &Temp_Buf[0];
             data.application_data_len = sizeof(Temp_Buf);
             /* note: legacy API passed buffer separately */
@@ -167,15 +176,6 @@ void handler_read_range(
                        data.error_class, data.error_code);
             }
             fflush(stdout);
-            if (len >= 0) {N_OTHER, true);
-            debug_print("RR: Bad Encoding.  Sending Abort!\n");
-        } else {
-            /* assume that there is an error */
-            error = true;
-            data.application_data = &Temp_Buf[0];
-            data.application_data_len = sizeof(Temp_Buf);
-            /* note: legacy API passed buffer separately */
-            len = Encode_RR_payload(&Temp_Buf[0], &data);
             if (len >= 0) {
                 data.application_data_len = len;
                 /* encode the APDU portion of the packet */
