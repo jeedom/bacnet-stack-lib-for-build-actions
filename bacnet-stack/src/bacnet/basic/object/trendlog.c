@@ -1112,14 +1112,6 @@ int TL_encode_by_position(uint8_t *apdu, BACNET_READ_RANGE_DATA *pRequest)
                pRequest->Count, (unsigned int)pRequest->Range.RefIndex);
     }
     fflush(stdout);
-        /*
-         * Read all the list or as much as will fit in the buffer by
-         * selecting a range that covers the whole list and falling through
-         * to the next section of code
-         */
-        pRequest->Count = CurrentLog->ulRecordCount; /* Full list */
-        pRequest->Range.RefIndex = 1; /* Starting at the beginning */
-    }
 
     if (pRequest->Count <
         0) { /* negative count means work from index backwards */
