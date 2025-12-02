@@ -800,17 +800,29 @@ bool TrendLogGetRRInfo(
 { /* Where to put the information */
     int log_index;
 
+    printf("=== TrendLogGetRRInfo called ===\n");
+    printf("  Instance: %u\n", pRequest->object_instance);
+    printf("  Property: %u\n", pRequest->object_property);
+    fflush(stdout);
+
     log_index = Trend_Log_Instance_To_Index(pRequest->object_instance);
     if (log_index >= MAX_TREND_LOGS) {
         pRequest->error_class = ERROR_CLASS_OBJECT;
         pRequest->error_code = ERROR_CODE_UNKNOWN_OBJECT;
+        printf("  ERROR: Invalid log_index %d (>= MAX_TREND_LOGS)\n", log_index);
+        fflush(stdout);
     } else if (pRequest->object_property == PROP_LOG_BUFFER) {
         pInfo->RequestTypes = RR_BY_POSITION | RR_BY_TIME | RR_BY_SEQUENCE;
         pInfo->Handler = rr_trend_log_encode;
+        printf("  SUCCESS: Configured for LOG_BUFFER property\n");
+        printf("  RecordCount: %u\n", (unsigned int)LogInfo[log_index].ulRecordCount);
+        fflush(stdout);
         return (true);
     } else {
         pRequest->error_class = ERROR_CLASS_SERVICES;
         pRequest->error_code = ERROR_CODE_PROPERTY_IS_NOT_A_LIST;
+        printf("  ERROR: Property %u is not LOG_BUFFER\n", pRequest->object_property);
+        fflush(stdout);
     }
 
     return (false);
@@ -998,10 +1010,20 @@ void TL_Local_Time_To_BAC(BACNET_DATE_TIME *bdatetime, bacnet_time_t seconds)
 int rr_trend_log_encode(uint8_t *apdu, BACNET_READ_RANGE_DATA *pRequest)
 {
     int log_index = 0;
+    int result = 0;
 
+    printf("  === rr_trend_log_encode called ===\n");
+    
     if (!pRequest) {
+        printf("  ERROR: pRequest is NULL\n");
+        fflush(stdout);
         return 0;
     }
+    
+    printf("  Instance: %u\n", pRequest->object_instance);
+    printf("  RequestType: %d\n", pRequest->RequestType);
+    fflush(stdout);
+    
     /* Initialise result flags to all false */
     bitstring_init(&pRequest->ResultFlags);
     bitstring_set_bit(&pRequest->ResultFlags, RESULT_FLAG_FIRST_ITEM, false);
@@ -1011,20 +1033,40 @@ int rr_trend_log_encode(uint8_t *apdu, BACNET_READ_RANGE_DATA *pRequest)
 
     log_index = Trend_Log_Instance_To_Index(pRequest->object_instance);
     if (log_index >= MAX_TREND_LOGS) {
+        printf("  ERROR: Invalid log_index %d (>= MAX_TREND_LOGS)\n", log_index);
+        fflush(stdout);
         return 0;
     }
+    
+    printf("  RecordCount: %u\n", (unsigned int)LogInfo[log_index].ulRecordCount);
+    fflush(stdout);
+    
     /* Bail out now if nowt - should never happen for a Trend Log but ... */
     if (LogInfo[log_index].ulRecordCount == 0) {
+        printf("  WARNING: RecordCount is 0, returning empty result\n");
+        fflush(stdout);
         return 0;
     }
+    
     if ((pRequest->RequestType == RR_BY_POSITION) ||
         (pRequest->RequestType == RR_READ_ALL)) {
-        return (TL_encode_by_position(apdu, pRequest));
+        printf("  Encoding by POSITION/ALL\n");
+        fflush(stdout);
+        result = TL_encode_by_position(apdu, pRequest);
     } else if (pRequest->RequestType == RR_BY_SEQUENCE) {
-        return (TL_encode_by_sequence(apdu, pRequest));
+        printf("  Encoding by SEQUENCE\n");
+        fflush(stdout);
+        result = TL_encode_by_sequence(apdu, pRequest);
+    } else {
+        printf("  Encoding by TIME\n");
+        fflush(stdout);
+        result = TL_encode_by_time(apdu, pRequest);
     }
+    
+    printf("  Encode result: %d bytes, ItemCount: %u\n", result, pRequest->ItemCount);
+    fflush(stdout);
 
-    return (TL_encode_by_time(apdu, pRequest));
+    return result;
 }
 
 /**
@@ -1049,11 +1091,27 @@ int TL_encode_by_position(uint8_t *apdu, BACNET_READ_RANGE_DATA *pRequest)
     uint32_t uiTarget = 0; /* Last entry we are required to encode */
     uint32_t uiRemaining = 0; /* Amount of unused space in packet */
 
+    printf("    === TL_encode_by_position ===\n");
+    
     /* See how much space we have */
     uiRemaining = MAX_APDU - pRequest->Overhead;
+    printf("    Available space: %u bytes\n", uiRemaining);
+    
     log_index = Trend_Log_Instance_To_Index(pRequest->object_instance);
     CurrentLog = &LogInfo[log_index];
+    
+    printf("    RecordCount: %u\n", (unsigned int)CurrentLog->ulRecordCount);
+    
     if (pRequest->RequestType == RR_READ_ALL) {
+        pRequest->Count = CurrentLog->ulRecordCount;
+        pRequest->Range.RefIndex = 1;
+        printf("    Mode: READ_ALL (Count=%d, RefIndex=%u)\n", 
+               pRequest->Count, (unsigned int)pRequest->Range.RefIndex);
+    } else {
+        printf("    Mode: BY_POSITION (Count=%d, RefIndex=%u)\n",
+               pRequest->Count, (unsigned int)pRequest->Range.RefIndex);
+    }
+    fflush(stdout);
         /*
          * Read all the list or as much as will fit in the buffer by
          * selecting a range that covers the whole list and falling through
@@ -1105,6 +1163,9 @@ int TL_encode_by_position(uint8_t *apdu, BACNET_READ_RANGE_DATA *pRequest)
         CurrentLog->ulRecordCount) { /* Capped at end of list if necessary */
         uiTarget = CurrentLog->ulRecordCount;
     }
+
+    printf("    Target range: %u to %u\n", (unsigned int)pRequest->Range.RefIndex, uiTarget);
+    fflush(stdout);
 
     uiIndex = pRequest->Range.RefIndex;
     uiFirst = uiIndex; /* Record where we started from */
@@ -1428,6 +1489,10 @@ int TL_encode_by_time(uint8_t *apdu, BACNET_READ_RANGE_DATA *pRequest)
             break;
         }
     }
+
+    printf("    Encoded: ItemCount=%u, Length=%d bytes, First=%u, Last=%u\n",
+           pRequest->ItemCount, iLen, uiFirst, uiLast);
+    fflush(stdout);
 
     /* Set remaining result flags if necessary */
     if (uiFirst == 1) {

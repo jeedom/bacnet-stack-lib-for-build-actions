@@ -3689,8 +3689,6 @@ int main(int argc, char *argv[])
     int argi = 1;
     char buf[256];
     static struct mstimer Trendlog_Timer = { 0 };
-    static unsigned long trendlog_tick_count = 0;
-     static unsigned long trendlog_debug_counter = 0;
     
     memset(&src, 0, sizeof(src));
     
@@ -3761,7 +3759,6 @@ int main(int argc, char *argv[])
     }
 
     mstimer_set(&Trendlog_Timer, 1000);
-    printf("Trendlog timer initialized (1 second interval)\n");
     Send_I_Am(&Rx_Buf[0]);
     printf("I-Am broadcasted\n");
 
@@ -3877,40 +3874,6 @@ int main(int argc, char *argv[])
 
     if (mstimer_expired(&Trendlog_Timer)) {
         mstimer_reset(&Trendlog_Timer);
-        
-        trendlog_debug_counter++;
-        
-        if (trendlog_debug_counter % 10 == 0) {
-            unsigned int i;
-            time_t now = time(NULL);
-            unsigned int count = Trend_Log_Count(); 
-            printf("\n=== TRENDLOG DEBUG (tick %lu) ===\n", trendlog_debug_counter);
-            printf("Current time: %ld\n", (long)now);
-             printf("Trend_Log_Count() = %u\n", count); 
-            for (i = 0; i < count; i++) { 
-                uint32_t instance = Trend_Log_Index_To_Instance(i); 
-                TL_LOG_INFO *info = Trend_Log_Get_Info(instance);   
-                bool enabled = TL_Is_Enabled(instance);            
-                
-                if (info) {  
-                    printf("TL[%u]:\n", instance);
-                    printf("  Enabled: %s\n", enabled ? "YES" : "NO");
-                    printf("  RecordCount: %u\n", (unsigned int)info->ulRecordCount);
-                    printf("  LogInterval: %u cs (= %u seconds)\n", 
-                        (unsigned int)info->ulLogInterval, (unsigned int)(info->ulLogInterval / 100));
-                    printf("  tLastDataTime: %ld\n", (long)info->tLastDataTime);
-                    printf("  Time since last log: %ld seconds\n", 
-                        (long)(now - info->tLastDataTime));
-                    printf("  Should log? %s\n", 
-                        ((now - info->tLastDataTime) >= (info->ulLogInterval / 100)) ? "YES" : "NO");
-                    printf("  Source: %s[%u]\n",
-                        bactext_object_type_name(info->Source.objectIdentifier.type),
-                        info->Source.objectIdentifier.instance);
-                }
-            }
-            printf("===============================\n\n");
-        }
-        
         trend_log_timer(1);
     }
 

@@ -118,6 +118,11 @@ void handler_read_range(
     int bytes_sent = 0;
     BACNET_ADDRESS my_address;
 
+    printf("=== ReadRange Request Received ===\n");
+    printf("  service_len: %u\n", service_len);
+    printf("  invoke_id: %u\n", service_data->invoke_id);
+    fflush(stdout);
+
     data.error_class = ERROR_CLASS_OBJECT;
     data.error_code = ERROR_CODE_UNKNOWN_OBJECT;
     /* encode the NPDU portion of the packet */
@@ -139,14 +144,29 @@ void handler_read_range(
     } else {
         memset(&data, 0, sizeof(data)); /* start with blank canvas */
         len = rr_decode_service_request(service_request, service_len, &data);
+        printf("  rr_decode result: %d\n", len);
+        if (len > 0) {
+            printf("  Object: %s[%u]\n", 
+                   bactext_object_type_name(data.object_type), 
+                   data.object_instance);
+            printf("  Property: %u\n", data.object_property);
+            printf("  RequestType: %d\n", data.RequestType);
+            fflush(stdout);
+        }
         if (len <= 0) {
             debug_print("RR: Unable to decode Request!\n");
         }
-        if (len < 0) {
-            /* bad decoding - send an abort */
-            len = abort_encode_apdu(
-                &Handler_Transmit_Buffer[pdu_len], service_data->invoke_id,
-                ABORT_REASON_OTHER, true);
+            data.application_data = &Temp_Buf[0];
+            data.application_data_len = sizeof(Temp_Buf);
+            /* note: legacy API passed buffer separately */
+            len = Encode_RR_payload(&Temp_Buf[0], &data);
+            printf("  Encode_RR_payload result: %d\n", len);
+            if (len < 0) {
+                printf("  ERROR: error_class=%d, error_code=%d\n", 
+                       data.error_class, data.error_code);
+            }
+            fflush(stdout);
+            if (len >= 0) {N_OTHER, true);
             debug_print("RR: Bad Encoding.  Sending Abort!\n");
         } else {
             /* assume that there is an error */
