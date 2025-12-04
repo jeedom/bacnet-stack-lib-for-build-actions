@@ -1558,9 +1558,6 @@ int main(int argc, char *argv[])
            bacnet_iface ? bacnet_iface : "auto-detect");
     fflush(stdout);
     
-    /* Set the BACnet/IP port BEFORE datalink_init */
-    bip_set_port(BACNET_PORT);
-    
     if (!datalink_init(bacnet_iface)) {
         fprintf(stderr, "[CLIENT] ✗ Failed to initialize datalink\n");
         fflush(stderr);
