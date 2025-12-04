@@ -1059,6 +1059,15 @@ static void handle_whois_command(int client_fd, json_t *params)
         device_max = json_integer_value(max_obj);
     }
     
+    /* BACnet Who-Is requires valid Device Instance range (0 to 4194303)
+     * Convert -1 (unlimited) to full range */
+    if (device_min < 0) {
+        device_min = 0;
+    }
+    if (device_max < 0) {
+        device_max = 4194303;  /* 0x3FFFFF - maximum 22-bit Device Instance */
+    }
+    
     /* Validation: if only one is specified, use it for both */
     if (device_min >= 0 && device_max < 0) {
         device_max = device_min;
@@ -1067,34 +1076,28 @@ static void handle_whois_command(int client_fd, json_t *params)
     }
     
     /* Validation: min must be <= max */
-    if (device_min >= 0 && device_max >= 0 && device_min > device_max) {
+    if (device_min > device_max) {
         int32_t tmp = device_min;
         device_min = device_max;
         device_max = tmp;
     }
     
+    /* Clamp to valid BACnet range */
+    if (device_min < 0) device_min = 0;
+    if (device_max > 4194303) device_max = 4194303;
+    
     /* Send Who-Is */
     printf("[CLIENT] Sending Who-Is broadcast (min=%d, max=%d)\n", device_min, device_max);
     fflush(stdout);
     
-    /* Check errno before sending */
     errno = 0;
-    
-    /* Always use Send_WhoIs for compatibility with shared port */
-    printf("[CLIENT] DEBUG: Calling Send_WhoIs(%d, %d) for broadcast...\n", device_min, device_max);
-    fflush(stdout);
-    errno = 0;  /* Reset errno before call */
     Send_WhoIs((int32_t)device_min, (int32_t)device_max);
-    printf("[CLIENT] DEBUG: Send_WhoIs() returned, errno=%d (%s)\n", 
-           errno, errno ? strerror(errno) : "no error");
-    fflush(stdout);
     
-    /* Check for errors */
     if (errno != 0) {
         printf("[CLIENT] ⚠ Warning after Send_WhoIs: %s (errno=%d)\n", strerror(errno), errno);
         fflush(stdout);
     } else {
-        printf("[CLIENT] Who-Is broadcast sent successfully (no errno)\n");
+        printf("[CLIENT] ✓ Who-Is broadcast sent successfully\n");
         fflush(stdout);
     }
     
