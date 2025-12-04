@@ -37,11 +37,8 @@
 #include "bacnet/bacerror.h"
 #include "bacnet/iam.h"
 #include "bacnet/arf.h"
-#include "bacnet/basic/tsm/tsm.h"
-#include "bacnet/address.h"
 #include "bacnet/npdu.h"
 #include "bacnet/apdu.h"
-#include "bacnet/datalink/datalink.h"
 #include "bacnet/whois.h"
 #include "bacnet/rp.h"
 #include "bacnet/rpm.h"
@@ -54,9 +51,10 @@
 #include "bacnet/timesync.h"
 #include "bacnet/datetime.h"
 #include "bacnet/bacapp.h"
+#include "bacnet/datalink/datalink.h"
+#include "bacnet/basic/binding/address.h"
 #include "bacnet/basic/services.h"
 #include "bacnet/basic/tsm/tsm.h"
-#include "bacnet/basic/binding/address.h"
 #include "bacnet/basic/service/s_iam.h"
 #include "bacnet/basic/service/s_whois.h"
 #include "bacnet/basic/service/s_rp.h"
@@ -754,8 +752,13 @@ static char *get_device_list_json(void)
         json_t *device = json_object();
         json_object_set_new(device, "deviceId", json_integer(dev->device_id));
         
-        char addr_str[64];
-        bacnet_address_to_ascii(addr_str, sizeof(addr_str), &dev->address);
+        char addr_str[128];
+        int pos = 0;
+        int i;
+        for (i = 0; i < dev->address.mac_len && i < MAX_MAC_LEN; i++) {
+            if (i > 0) pos += snprintf(addr_str + pos, sizeof(addr_str) - pos, ":");
+            pos += snprintf(addr_str + pos, sizeof(addr_str) - pos, "%02X", dev->address.mac[i]);
+        }
         json_object_set_new(device, "address", json_string(addr_str));
         
         json_object_set_new(device, "maxApdu", json_integer(dev->max_apdu));
@@ -897,7 +900,12 @@ static bool parse_object_id(const char *str, BACNET_OBJECT_TYPE *type, uint32_t 
 
 static bool parse_bacnet_address(const char *addr_str, BACNET_ADDRESS *addr)
 {
-    return bacnet_address_from_ascii(addr, addr_str);
+    BACNET_MAC_ADDRESS mac;
+    if (!bacnet_address_mac_from_ascii(&mac, addr_str)) {
+        return false;
+    }
+    bacnet_address_init(addr, &mac, 0, NULL);
+    return true;
 }
 
 static char *create_error_response(const char *error_msg)
