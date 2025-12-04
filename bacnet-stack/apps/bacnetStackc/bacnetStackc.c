@@ -16,6 +16,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,7 +37,7 @@
 #include "bacnet/bacerror.h"
 #include "bacnet/iam.h"
 #include "bacnet/arf.h"
-#include "bacnet/tsm.h"
+#include "bacnet/basic/tsm/tsm.h"
 #include "bacnet/address.h"
 #include "bacnet/npdu.h"
 #include "bacnet/apdu.h"
@@ -52,8 +53,16 @@
 #include "bacnet/readrange.h"
 #include "bacnet/timesync.h"
 #include "bacnet/datetime.h"
+#include "bacnet/bacapp.h"
 #include "bacnet/basic/services.h"
 #include "bacnet/basic/tsm/tsm.h"
+#include "bacnet/basic/binding/address.h"
+#include "bacnet/basic/service/s_iam.h"
+#include "bacnet/basic/service/s_whois.h"
+#include "bacnet/basic/service/s_rp.h"
+#include "bacnet/basic/service/s_rpm.h"
+#include "bacnet/basic/service/s_wp.h"
+#include "bacnet/basic/service/s_readrange.h"
 
 /* JSON parsing */
 #include <jansson.h>
@@ -945,10 +954,8 @@ static void handle_iam_command(int client_fd, json_t *params)
 {
     (void)params;
     
-    /* Send I-Am for our virtual client device */
-    Send_I_Am(&Handler_Transmit_Buffer[0]);
-    
-    char *response = create_success_response("I-Am sent");
+    /* Client doesn't announce itself as a device - it's just a client tool */
+    char *response = create_error_response("I-Am not implemented for pure client");
     write(client_fd, response, strlen(response));
     write(client_fd, "\n", 1);
     free(response);
@@ -1016,6 +1023,13 @@ static void handle_readprop_command(int client_fd, json_t *params)
     
     /* Send ReadProperty request */
     uint8_t invoke_id = tsm_next_free_invokeID();
+    if (invoke_id == 0) {
+        char *error = create_error_response("No free invoke ID available");
+        write(client_fd, error, strlen(error));
+        write(client_fd, "\n", 1);
+        free(error);
+        return;
+    }
     allocate_request(invoke_id);
     
     if (!Send_Read_Property_Request(&addr, obj_type, obj_instance, 
