@@ -307,11 +307,13 @@ static void my_i_am_handler(
     uint16_t vendor_id = 0;
     
     printf("[CLIENT] I-Am handler called (service_len=%u)\n", service_len);
+    fflush(stdout);
     
     if (bacnet_iam_request_decode(service_request, service_len,
                                    &device_id, &max_apdu, &segmentation, &vendor_id)) {
         printf("[CLIENT] ✓ I-Am decoded: Device %u, Max APDU %u, Vendor %u\n",
                device_id, max_apdu, vendor_id);
+        fflush(stdout);
         
         /* Log MAC address */
         printf("[CLIENT]   MAC address: ");
@@ -320,11 +322,14 @@ static void my_i_am_handler(
             printf("%s%02X", i > 0 ? ":" : "", src->mac[i]);
         }
         printf(" (len=%d)\n", src->mac_len);
+        fflush(stdout);
         
         add_device(device_id, src, max_apdu, segmentation, vendor_id);
         printf("[CLIENT] ✓ Device %u added to device_list\n", device_id);
+        fflush(stdout);
     } else {
         printf("[CLIENT] ✗ Failed to decode I-Am message\n");
+        fflush(stdout);
     }
 }
 
@@ -742,6 +747,7 @@ static void add_device(uint32_t device_id, BACNET_ADDRESS *addr,
         if (dev->device_id == device_id) {
             /* Update existing */
             printf("[CLIENT] Updating existing device %u in list\n", device_id);
+            fflush(stdout);
             bacnet_address_copy(&dev->address, addr);
             dev->max_apdu = max_apdu;
             dev->segmentation = segmentation;
@@ -755,6 +761,7 @@ static void add_device(uint32_t device_id, BACNET_ADDRESS *addr,
     
     /* Add new device */
     printf("[CLIENT] Adding NEW device %u to list\n", device_id);
+    fflush(stdout);
     dev = calloc(1, sizeof(DEVICE_ENTRY));
     if (dev) {
         dev->device_id = device_id;
@@ -766,8 +773,10 @@ static void add_device(uint32_t device_id, BACNET_ADDRESS *addr,
         dev->next = device_list;
         device_list = dev;
         printf("[CLIENT] ✓ Device %u successfully added\n", device_id);
+        fflush(stdout);
     } else {
         printf("[CLIENT] ✗ Failed to allocate memory for device %u\n", device_id);
+        fflush(stdout);
     }
     
     pthread_mutex_unlock(&device_mutex);
@@ -802,6 +811,7 @@ static char *get_device_list_json(void)
         count_dev = count_dev->next;
     }
     printf("[CLIENT] get_device_list_json: %d device(s) in list\n", device_count);
+    fflush(stdout);
     
     json_t *response = json_object();
     json_object_set_new(response, "status", json_string("success"));
@@ -842,6 +852,7 @@ static char *get_device_list_json(void)
     char *json_str = json_dumps(response, JSON_COMPACT);
     printf("[CLIENT] get_device_list_json: Generated JSON (%zu bytes)\n", 
            json_str ? strlen(json_str) : 0);
+    fflush(stdout);
     json_decref(response);
     
     pthread_mutex_unlock(&device_mutex);
@@ -917,6 +928,7 @@ static void *network_task(void *arg)
     (void)arg;
     
     printf("Network task started\n");
+    fflush(stdout);
     
     while (running) {
         /* Process BACnet messages */
@@ -935,6 +947,7 @@ static void *network_task(void *arg)
     }
     
     printf("Network task stopped\n");
+    fflush(stdout);
     return NULL;
 }
 
@@ -1046,10 +1059,45 @@ static void handle_whois_command(int client_fd, json_t *params)
         device_max = json_integer_value(max_obj);
     }
     
+    /* Validation: if only one is specified, use it for both */
+    if (device_min >= 0 && device_max < 0) {
+        device_max = device_min;
+    } else if (device_max >= 0 && device_min < 0) {
+        device_min = device_max;
+    }
+    
+    /* Validation: min must be <= max */
+    if (device_min >= 0 && device_max >= 0 && device_min > device_max) {
+        int32_t tmp = device_min;
+        device_min = device_max;
+        device_max = tmp;
+    }
+    
     /* Send Who-Is */
     printf("[CLIENT] Sending Who-Is broadcast (min=%d, max=%d)\n", device_min, device_max);
-    Send_WhoIs(device_min, device_max);
-    printf("[CLIENT] Who-Is broadcast sent successfully\n");
+    
+    /* Check errno before sending */
+    errno = 0;
+    
+    /* Use Send_WhoIs_Global for broadcast, or Send_WhoIs for specific range */
+    if (device_min < 0 || device_max < 0) {
+        /* Global broadcast (all devices) */
+        printf("[CLIENT] Using global Who-Is broadcast\n");
+        Send_WhoIs_Global(-1, -1);
+    } else {
+        /* Specific device range */
+        printf("[CLIENT] Using targeted Who-Is for range [%d-%d]\n", device_min, device_max);
+        Send_WhoIs(device_min, device_max);
+    }
+    
+    /* Check for errors */
+    if (errno != 0) {
+        printf("[CLIENT] ⚠ Warning after Send_WhoIs: %s (errno=%d)\n", strerror(errno), errno);
+        fflush(stdout);
+    } else {
+        printf("[CLIENT] Who-Is broadcast sent successfully (no errno)\n");
+        fflush(stdout);
+    }
     
     char *response = create_success_response("Who-Is sent");
     write(client_fd, response, strlen(response));
@@ -1283,15 +1331,19 @@ static void handle_devicelist_command(int client_fd, json_t *params)
     (void)params;
     
     printf("[CLIENT] Received devicelist command\n");
+    fflush(stdout);
     char *json = get_device_list_json();
     if (json) {
         printf("[CLIENT] Sending devicelist response (%zu bytes)\n", strlen(json));
+        fflush(stdout);
         write(client_fd, json, strlen(json));
         write(client_fd, "\n", 1);
         free(json);
         printf("[CLIENT] Devicelist response sent\n");
+        fflush(stdout);
     } else {
         printf("[CLIENT] ✗ Failed to generate devicelist JSON\n");
+        fflush(stdout);
         char *error = create_error_response("Failed to generate device list");
         write(client_fd, error, strlen(error));
         write(client_fd, "\n", 1);
@@ -1407,7 +1459,9 @@ int main(int argc, char *argv[])
     }
     
     printf("BACnet Stack Client v1.0\n");
+    fflush(stdout);
     printf("Socket port: %d\n", socket_port);
+    fflush(stdout);
     
     /* Write PID file if specified */
     if (pid_file_path[0] != '\0') {
@@ -1416,6 +1470,7 @@ int main(int argc, char *argv[])
             fprintf(pid_fp, "%d\n", getpid());
             fclose(pid_fp);
             printf("PID %d written to %s\n", getpid(), pid_file_path);
+            fflush(stdout);
         }
     }
     
@@ -1423,13 +1478,23 @@ int main(int argc, char *argv[])
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
     
+    /* Disable stdout buffering for real-time logs */
+    setbuf(stdout, NULL);
+    setbuf(stderr, NULL);
+    
     /* Initialize BACnet datalink */
+    printf("[CLIENT] Initializing BACnet datalink (interface: %s)...\n", 
+           DEFAULT_BACNET_INTERFACE ? DEFAULT_BACNET_INTERFACE : "auto-detect");
+    
     if (!datalink_init(DEFAULT_BACNET_INTERFACE)) {
-        fprintf(stderr, "Failed to initialize datalink\n");
+        fprintf(stderr, "[CLIENT] ✗ Failed to initialize datalink\n");
         return 1;
     }
     
-    printf("BACnet datalink initialized\n");
+    printf("[CLIENT] ✓ BACnet datalink initialized successfully\n");
+    fflush(stdout);
+    printf("[CLIENT] BACnet/IP port: 47808 (0xBAC0)\n");
+    fflush(stdout);
     
     /* Set handlers */
     apdu_set_unconfirmed_handler(SERVICE_UNCONFIRMED_I_AM, my_i_am_handler);
@@ -1495,7 +1560,9 @@ int main(int argc, char *argv[])
     }
     
     printf("Listening on TCP port %d\n", socket_port);
+    fflush(stdout);
     printf("Client ready. Press Ctrl+C to exit.\n");
+    fflush(stdout);
     
     /* Main socket loop */
     while (running) {
