@@ -3692,7 +3692,7 @@ int main(int argc, char *argv[])
     
     memset(&src, 0, sizeof(src));
     
-    printf("BACnet Stack Server (Jeedom)\n");
+    printf("BACnet Stack Server (Jeedom )\n");
     printf("Version: %s\n", BACNET_VERSION_TEXT);
 
     if (argi < argc && argv[argi][0] != '-') {
