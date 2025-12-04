@@ -29,7 +29,9 @@
 
 #ifndef BACNET_EXCEPTION_SCHEDULE_SIZE
 /* Maximum number of special events */
-#define BACNET_EXCEPTION_SCHEDULE_SIZE 8
+/* Set to 0 to disable exception schedules (no PROP_EXCEPTION_SCHEDULE property) */
+/* Set to a value > 0 to enable exception schedules if needed */
+#define BACNET_EXCEPTION_SCHEDULE_SIZE 0
 #endif
 
 #ifdef __cplusplus
