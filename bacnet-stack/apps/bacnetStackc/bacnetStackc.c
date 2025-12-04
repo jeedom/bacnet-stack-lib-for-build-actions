@@ -54,6 +54,7 @@
 #include "bacnet/datetime.h"
 #include "bacnet/bacapp.h"
 #include "bacnet/datalink/datalink.h"
+#include "bacnet/datalink/bip.h"
 #include "bacnet/basic/binding/address.h"
 #include "bacnet/basic/services.h"
 #include "bacnet/basic/tsm/tsm.h"
