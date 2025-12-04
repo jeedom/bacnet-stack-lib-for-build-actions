@@ -1085,12 +1085,21 @@ static void handle_whois_command(int client_fd, json_t *params)
         /* Global broadcast (all devices) */
         printf("[CLIENT] Using global Who-Is broadcast (no device range)\n");
         fflush(stdout);
-        Send_WhoIs_Global();  /* ✓ CORRECTION: No parameters needed */
+        printf("[CLIENT] DEBUG: Calling Send_WhoIs_Global(%d, %d)...\n", device_min, device_max);
+        fflush(stdout);
+        errno = 0;  /* Reset errno before call */
+        Send_WhoIs_Global((int32_t)device_min, (int32_t)device_max);
+        printf("[CLIENT] DEBUG: Send_WhoIs_Global() returned, errno=%d (%s)\n", 
+               errno, errno ? strerror(errno) : "no error");
+        fflush(stdout);
     } else {
         /* Specific device range */
         printf("[CLIENT] Using targeted Who-Is for range [%d-%d]\n", device_min, device_max);
         fflush(stdout);
+        errno = 0;  /* Reset errno before call */
         Send_WhoIs(device_min, device_max);
+        printf("[CLIENT] DEBUG: Send_WhoIs() returned, errno=%d\n", errno);
+        fflush(stdout);
     }
     
     /* Check for errors */
@@ -1488,14 +1497,30 @@ int main(int argc, char *argv[])
     /* Initialize BACnet datalink */
     printf("[CLIENT] Initializing BACnet datalink (interface: %s)...\n", 
            DEFAULT_BACNET_INTERFACE ? DEFAULT_BACNET_INTERFACE : "auto-detect");
+    fflush(stdout);
     
     if (!datalink_init(DEFAULT_BACNET_INTERFACE)) {
         fprintf(stderr, "[CLIENT] ✗ Failed to initialize datalink\n");
+        fflush(stderr);
         return 1;
     }
     
     printf("[CLIENT] ✓ BACnet datalink initialized successfully\n");
     fflush(stdout);
+    
+    /* Verify datalink is functional */
+    BACNET_ADDRESS my_addr;
+    datalink_get_my_address(&my_addr);
+    printf("[CLIENT] DEBUG: My BACnet address - MAC len=%d, net=%u\n", 
+           my_addr.mac_len, my_addr.net);
+    fflush(stdout);
+    
+    BACNET_ADDRESS bcast_addr;
+    datalink_get_broadcast_address(&bcast_addr);
+    printf("[CLIENT] DEBUG: Broadcast address - MAC len=%d, net=%u\n", 
+           bcast_addr.mac_len, bcast_addr.net);
+    fflush(stdout);
+    
     printf("[CLIENT] BACnet/IP port: 47808 (0xBAC0)\n");
     fflush(stdout);
     
