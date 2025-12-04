@@ -1080,27 +1080,14 @@ static void handle_whois_command(int client_fd, json_t *params)
     /* Check errno before sending */
     errno = 0;
     
-    /* Use Send_WhoIs_Global for broadcast, or Send_WhoIs for specific range */
-    if (device_min < 0 || device_max < 0) {
-        /* Global broadcast (all devices) */
-        printf("[CLIENT] Using global Who-Is broadcast (no device range)\n");
-        fflush(stdout);
-        printf("[CLIENT] DEBUG: Calling Send_WhoIs_Global(%d, %d)...\n", device_min, device_max);
-        fflush(stdout);
-        errno = 0;  /* Reset errno before call */
-        Send_WhoIs_Global((int32_t)device_min, (int32_t)device_max);
-        printf("[CLIENT] DEBUG: Send_WhoIs_Global() returned, errno=%d (%s)\n", 
-               errno, errno ? strerror(errno) : "no error");
-        fflush(stdout);
-    } else {
-        /* Specific device range */
-        printf("[CLIENT] Using targeted Who-Is for range [%d-%d]\n", device_min, device_max);
-        fflush(stdout);
-        errno = 0;  /* Reset errno before call */
-        Send_WhoIs(device_min, device_max);
-        printf("[CLIENT] DEBUG: Send_WhoIs() returned, errno=%d\n", errno);
-        fflush(stdout);
-    }
+    /* Always use Send_WhoIs for compatibility with shared port */
+    printf("[CLIENT] DEBUG: Calling Send_WhoIs(%d, %d) for broadcast...\n", device_min, device_max);
+    fflush(stdout);
+    errno = 0;  /* Reset errno before call */
+    Send_WhoIs((int32_t)device_min, (int32_t)device_max);
+    printf("[CLIENT] DEBUG: Send_WhoIs() returned, errno=%d (%s)\n", 
+           errno, errno ? strerror(errno) : "no error");
+    fflush(stdout);
     
     /* Check for errors */
     if (errno != 0) {
