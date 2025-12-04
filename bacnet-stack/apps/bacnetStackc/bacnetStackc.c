@@ -197,20 +197,20 @@ static COV_SUBSCRIPTION *find_cov_subscription(uint32_t device_id,
                                                uint32_t obj_instance);
 
 /* Command handlers */
-static void handle_whois_command(int client_fd, cJSON *params);
-static void handle_iam_command(int client_fd, cJSON *params);
-static void handle_readprop_command(int client_fd, cJSON *params);
-static void handle_readpropm_command(int client_fd, cJSON *params);
-static void handle_readrange_command(int client_fd, cJSON *params);
-static void handle_writeprop_command(int client_fd, cJSON *params);
-static void handle_writepropm_command(int client_fd, cJSON *params);
-static void handle_subscribecov_command(int client_fd, cJSON *params);
-static void handle_unsubscribecov_command(int client_fd, cJSON *params);
-static void handle_timesync_command(int client_fd, cJSON *params);
-static void handle_whohas_command(int client_fd, cJSON *params);
-static void handle_devicelist_command(int client_fd, cJSON *params);
-static void handle_reinit_command(int client_fd, cJSON *params);
-static void handle_devicecomm_command(int client_fd, cJSON *params);
+static void handle_whois_command(int client_fd, json_t *params);
+static void handle_iam_command(int client_fd, json_t *params);
+static void handle_readprop_command(int client_fd, json_t *params);
+static void handle_readpropm_command(int client_fd, json_t *params);
+static void handle_readrange_command(int client_fd, json_t *params);
+static void handle_writeprop_command(int client_fd, json_t *params);
+static void handle_writepropm_command(int client_fd, json_t *params);
+static void handle_subscribecov_command(int client_fd, json_t *params);
+static void handle_unsubscribecov_command(int client_fd, json_t *params);
+static void handle_timesync_command(int client_fd, json_t *params);
+static void handle_whohas_command(int client_fd, json_t *params);
+static void handle_devicelist_command(int client_fd, json_t *params);
+static void handle_reinit_command(int client_fd, json_t *params);
+static void handle_devicecomm_command(int client_fd, json_t *params);
 
 /* Utility functions */
 static bool parse_object_id(const char *str, BACNET_OBJECT_TYPE *type, uint32_t *instance);
@@ -269,10 +269,13 @@ static void cleanup(void)
     
     /* Free pending requests */
     pthread_mutex_lock(&response_mutex);
-    for (int i = 0; i < MAX_PENDING_REQUESTS; i++) {
-        if (pending_requests[i].response_json) {
-            free(pending_requests[i].response_json);
-            pending_requests[i].response_json = NULL;
+    {
+        int i;
+        for (i = 0; i < MAX_PENDING_REQUESTS; i++) {
+            if (pending_requests[i].response_json) {
+                free(pending_requests[i].response_json);
+                pending_requests[i].response_json = NULL;
+            }
         }
     }
     pthread_mutex_unlock(&response_mutex);
@@ -293,7 +296,7 @@ static void my_i_am_handler(
     int segmentation = 0;
     uint16_t vendor_id = 0;
     
-    if (iam_decode_service_request(service_request, service_len,
+    if (bacnet_iam_request_decode(service_request, service_len,
                                    &device_id, &max_apdu, &segmentation, &vendor_id)) {
         printf("I-Am received: Device %u, Max APDU %u, Vendor %u\n",
                device_id, max_apdu, vendor_id);
@@ -338,9 +341,17 @@ static void my_read_property_ack_handler(
                                 json_string(bactext_property_name(data.object_property)));
             
             /* Add value based on type */
-            char value_str[256];
-            bacapp_snprintf_value(value_str, sizeof(value_str), &value);
-            json_object_set_new(result, "value", json_string(value_str));
+            {
+                char value_str[256];
+                BACNET_OBJECT_PROPERTY_VALUE obj_value;
+                obj_value.object_type = data.object_type;
+                obj_value.object_instance = data.object_instance;
+                obj_value.object_property = data.object_property;
+                obj_value.array_index = data.array_index;
+                obj_value.value = &value;
+                bacapp_snprintf_value(value_str, sizeof(value_str), &obj_value);
+                json_object_set_new(result, "value", json_string(value_str));
+            }
             json_object_set_new(result, "datatype",
                                 json_string(bactext_application_tag_name(value.tag)));
             
@@ -401,11 +412,17 @@ static void my_read_property_multiple_ack_handler(
                 
                 if (rpm_property->value) {
                     char value_str[256];
-                    bacapp_snprintf_value(value_str, sizeof(value_str), rpm_property->value);
+                    BACNET_OBJECT_PROPERTY_VALUE obj_value;
+                    obj_value.object_type = rpm_object->object_type;
+                    obj_value.object_instance = rpm_object->object_instance;
+                    obj_value.object_property = rpm_property->propertyIdentifier;
+                    obj_value.array_index = rpm_property->propertyArrayIndex;
+                    obj_value.value = rpm_property->value;
+                    bacapp_snprintf_value(value_str, sizeof(value_str), &obj_value);
                     json_object_set_new(prop, "value", json_string(value_str));
                 }
                 
-                if (rpm_property->error.error_class != ERROR_CLASS_NONE) {
+                if (rpm_property->error.error_class < MAX_BACNET_ERROR_CLASS) {
                     json_object_set_new(prop, "error",
                                       json_string(bactext_error_code_name(rpm_property->error.error_code)));
                 }
@@ -427,7 +444,7 @@ static void my_read_property_multiple_ack_handler(
         json_decref(response);
     }
     
-    rpm_ack_free(rpm_data);
+    rpm_data_free(rpm_data);
 }
 
 /*
@@ -536,7 +553,13 @@ static void my_cov_notification_handler(
             
             if (value_list->value.tag != BACNET_APPLICATION_TAG_NULL) {
                 char value_str[256];
-                bacapp_snprintf_value(value_str, sizeof(value_str), &value_list->value);
+                BACNET_OBJECT_PROPERTY_VALUE obj_value;
+                obj_value.object_type = cov_data.monitoredObjectIdentifier.type;
+                obj_value.object_instance = cov_data.monitoredObjectIdentifier.instance;
+                obj_value.object_property = value_list->propertyIdentifier;
+                obj_value.array_index = BACNET_ARRAY_ALL;
+                obj_value.value = &value_list->value;
+                bacapp_snprintf_value(value_str, sizeof(value_str), &obj_value);
                 json_object_set_new(prop, "value", json_string(value_str));
             }
             
@@ -667,9 +690,10 @@ static void complete_request(uint8_t invoke_id, const char *json_response, bool 
 static void cleanup_old_requests(void)
 {
     time_t now = time(NULL);
+    int i;
     
     pthread_mutex_lock(&response_mutex);
-    for (int i = 0; i < MAX_PENDING_REQUESTS; i++) {
+    for (i = 0; i < MAX_PENDING_REQUESTS; i++) {
         if (pending_requests[i].timestamp > 0 &&
             (now - pending_requests[i].timestamp) > 60) {
             if (pending_requests[i].response_json) {
@@ -882,12 +906,13 @@ static bool parse_object_id(const char *str, BACNET_OBJECT_TYPE *type, uint32_t 
 {
     char type_str[64];
     unsigned int inst;
+    int i;
     
     if (sscanf(str, "%63[^:]:%u", type_str, &inst) == 2) {
         *instance = inst;
         
         /* Try to parse object type */
-        for (int i = 0; i < MAX_BACNET_OBJECT_TYPE; i++) {
+        for (i = 0; i < MAX_BACNET_OBJECT_TYPE; i++) {
             if (strcasecmp(type_str, bactext_object_type_name(i)) == 0) {
                 *type = i;
                 return true;
@@ -1009,10 +1034,13 @@ static void handle_readprop_command(int client_fd, json_t *params)
     
     /* Parse property */
     BACNET_PROPERTY_ID prop_id = PROP_ALL;
-    for (int i = 0; i < 4096; i++) {
-        if (strcasecmp(json_string_value(property_obj), bactext_property_name(i)) == 0) {
-            prop_id = i;
-            break;
+    {
+        int i;
+        for (i = 0; i < 4096; i++) {
+            if (strcasecmp(json_string_value(property_obj), bactext_property_name(i)) == 0) {
+                prop_id = i;
+                break;
+            }
         }
     }
     
@@ -1040,7 +1068,7 @@ static void handle_readprop_command(int client_fd, json_t *params)
     }
     allocate_request(invoke_id);
     
-    if (!Send_Read_Property_Request(&addr, obj_type, obj_instance, 
+    if (!Send_Read_Property_Request(device_id, obj_type, obj_instance, 
                                     prop_id, array_index)) {
         char *error = create_error_response("Failed to send request");
         write(client_fd, error, strlen(error));
