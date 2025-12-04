@@ -306,25 +306,12 @@ static void my_i_am_handler(
     int segmentation = 0;
     uint16_t vendor_id = 0;
     
-    printf("[CLIENT] I-Am handler called (service_len=%u)\n", service_len);
-    
     if (bacnet_iam_request_decode(service_request, service_len,
                                    &device_id, &max_apdu, &segmentation, &vendor_id)) {
-        printf("[CLIENT] ✓ I-Am decoded: Device %u, Max APDU %u, Vendor %u\n",
+        printf("I-Am received: Device %u, Max APDU %u, Vendor %u\n",
                device_id, max_apdu, vendor_id);
         
-        /* Log MAC address */
-        printf("[CLIENT]   MAC address: ");
-        int i;
-        for (i = 0; i < src->mac_len && i < MAX_MAC_LEN; i++) {
-            printf("%s%02X", i > 0 ? ":" : "", src->mac[i]);
-        }
-        printf(" (len=%d)\n", src->mac_len);
-        
         add_device(device_id, src, max_apdu, segmentation, vendor_id);
-        printf("[CLIENT] ✓ Device %u added to device_list\n", device_id);
-    } else {
-        printf("[CLIENT] ✗ Failed to decode I-Am message\n");
     }
 }
 
@@ -741,7 +728,6 @@ static void add_device(uint32_t device_id, BACNET_ADDRESS *addr,
     while (dev) {
         if (dev->device_id == device_id) {
             /* Update existing */
-            printf("[CLIENT] Updating existing device %u in list\n", device_id);
             bacnet_address_copy(&dev->address, addr);
             dev->max_apdu = max_apdu;
             dev->segmentation = segmentation;
@@ -754,7 +740,6 @@ static void add_device(uint32_t device_id, BACNET_ADDRESS *addr,
     }
     
     /* Add new device */
-    printf("[CLIENT] Adding NEW device %u to list\n", device_id);
     dev = calloc(1, sizeof(DEVICE_ENTRY));
     if (dev) {
         dev->device_id = device_id;
@@ -765,9 +750,6 @@ static void add_device(uint32_t device_id, BACNET_ADDRESS *addr,
         dev->last_seen = time(NULL);
         dev->next = device_list;
         device_list = dev;
-        printf("[CLIENT] ✓ Device %u successfully added\n", device_id);
-    } else {
-        printf("[CLIENT] ✗ Failed to allocate memory for device %u\n", device_id);
     }
     
     pthread_mutex_unlock(&device_mutex);
@@ -792,16 +774,7 @@ static DEVICE_ENTRY *find_device(uint32_t device_id)
 
 static char *get_device_list_json(void)
 {
-    int device_count = 0;
     pthread_mutex_lock(&device_mutex);
-    
-    /* Count devices first */
-    DEVICE_ENTRY *count_dev = device_list;
-    while (count_dev) {
-        device_count++;
-        count_dev = count_dev->next;
-    }
-    printf("[CLIENT] get_device_list_json: %d device(s) in list\n", device_count);
     
     json_t *response = json_object();
     json_object_set_new(response, "status", json_string("success"));
@@ -839,9 +812,7 @@ static char *get_device_list_json(void)
     
     json_object_set_new(response, "devices", devices);
     
-    char *json_str = json_dumps(response, JSON_COMPACT);
-    printf("[CLIENT] get_device_list_json: Generated JSON (%zu bytes)\n", 
-           json_str ? strlen(json_str) : 0);
+    char *json_str = json_dumps(response, JSON_INDENT(2));
     json_decref(response);
     
     pthread_mutex_unlock(&device_mutex);
@@ -972,39 +943,6 @@ static bool parse_bacnet_address(const char *addr_str, BACNET_ADDRESS *addr)
     return true;
 }
 
-/*
- * Convert IP address string to BACnet/IP address
- * Example: "192.168.1.100" -> BACNET_ADDRESS with MAC = [C0, A8, 01, 64, BA, C0]
- */
-static bool ip_to_bacnet_address(const char *ip_str, BACNET_ADDRESS *addr)
-{
-    unsigned int ip_parts[4];
-    
-    if (sscanf(ip_str, "%u.%u.%u.%u", &ip_parts[0], &ip_parts[1], 
-               &ip_parts[2], &ip_parts[3]) != 4) {
-        return false;
-    }
-    
-    /* Validate IP parts */
-    if (ip_parts[0] > 255 || ip_parts[1] > 255 || 
-        ip_parts[2] > 255 || ip_parts[3] > 255) {
-        return false;
-    }
-    
-    /* BACnet/IP MAC address = 4 bytes IP + 2 bytes port (0xBAC0 = 47808) */
-    addr->mac[0] = (uint8_t)ip_parts[0];
-    addr->mac[1] = (uint8_t)ip_parts[1];
-    addr->mac[2] = (uint8_t)ip_parts[2];
-    addr->mac[3] = (uint8_t)ip_parts[3];
-    addr->mac[4] = 0xBA;  /* Port high byte */
-    addr->mac[5] = 0xC0;  /* Port low byte */
-    addr->mac_len = 6;
-    addr->net = 0;  /* Local network */
-    addr->len = 0;  /* No SADR */
-    
-    return true;
-}
-
 static char *create_error_response(const char *error_msg)
 {
     json_t *response = json_object();
@@ -1047,9 +985,7 @@ static void handle_whois_command(int client_fd, json_t *params)
     }
     
     /* Send Who-Is */
-    printf("[CLIENT] Sending Who-Is broadcast (min=%d, max=%d)\n", device_min, device_max);
     Send_WhoIs(device_min, device_max);
-    printf("[CLIENT] Who-Is broadcast sent successfully\n");
     
     char *response = create_success_response("Who-Is sent");
     write(client_fd, response, strlen(response));
@@ -1072,22 +1008,18 @@ static void handle_readprop_command(int client_fd, json_t *params)
 {
     /* Parse parameters */
     json_t *device_obj = json_object_get(params, "device");
-    json_t *ip_obj = json_object_get(params, "ip");
     json_t *address_obj = json_object_get(params, "address");
     json_t *object_obj = json_object_get(params, "object");
     json_t *property_obj = json_object_get(params, "property");
     json_t *array_obj = json_object_get(params, "arrayIndex");
     
-    if (!device_obj || !object_obj || !property_obj) {
-        char *error = create_error_response("Missing required parameters (device, object, property)");
+    if (!device_obj || !address_obj || !object_obj || !property_obj) {
+        char *error = create_error_response("Missing required parameters");
         write(client_fd, error, strlen(error));
         write(client_fd, "\n", 1);
         free(error);
         return;
     }
-    
-    /* Get device ID */
-    uint32_t device_id = json_integer_value(device_obj);
     
     /* Parse object ID */
     BACNET_OBJECT_TYPE obj_type;
@@ -1100,45 +1032,14 @@ static void handle_readprop_command(int client_fd, json_t *params)
         return;
     }
     
-    /* Resolve address: priority order = ip > address > device_list */
+    /* Parse address */
     BACNET_ADDRESS addr;
-    bool addr_resolved = false;
-    
-    if (ip_obj && json_is_string(ip_obj)) {
-        /* Option 1: Direct IP address (PREFERRED for Jeedom eqLogic) */
-        if (ip_to_bacnet_address(json_string_value(ip_obj), &addr)) {
-            addr_resolved = true;
-        } else {
-            char *error = create_error_response("Invalid IP address format");
-            write(client_fd, error, strlen(error));
-            write(client_fd, "\n", 1);
-            free(error);
-            return;
-        }
-    } else if (address_obj && json_is_string(address_obj)) {
-        /* Option 2: MAC address (legacy compatibility) */
-        if (parse_bacnet_address(json_string_value(address_obj), &addr)) {
-            addr_resolved = true;
-        } else {
-            char *error = create_error_response("Invalid MAC address format");
-            write(client_fd, error, strlen(error));
-            write(client_fd, "\n", 1);
-            free(error);
-            return;
-        }
-    } else {
-        /* Option 3: Lookup from discovered devices */
-        DEVICE_ENTRY *dev = find_device(device_id);
-        if (dev) {
-            bacnet_address_copy(&addr, &dev->address);
-            addr_resolved = true;
-        } else {
-            char *error = create_error_response("Device not found. Provide 'ip' or run Who-Is first.");
-            write(client_fd, error, strlen(error));
-            write(client_fd, "\n", 1);
-            free(error);
-            return;
-        }
+    if (!parse_bacnet_address(json_string_value(address_obj), &addr)) {
+        char *error = create_error_response("Invalid address format");
+        write(client_fd, error, strlen(error));
+        write(client_fd, "\n", 1);
+        free(error);
+        return;
     }
     
     /* Parse property */
@@ -1165,6 +1066,9 @@ static void handle_readprop_command(int client_fd, json_t *params)
     if (array_obj && json_is_integer(array_obj)) {
         array_index = json_integer_value(array_obj);
     }
+    
+    /* Get device ID */
+    uint32_t device_id = json_integer_value(device_obj);
     
     /* Send ReadProperty request */
     uint8_t invoke_id = tsm_next_free_invokeID();
@@ -1282,21 +1186,10 @@ static void handle_devicelist_command(int client_fd, json_t *params)
 {
     (void)params;
     
-    printf("[CLIENT] Received devicelist command\n");
     char *json = get_device_list_json();
-    if (json) {
-        printf("[CLIENT] Sending devicelist response (%zu bytes)\n", strlen(json));
-        write(client_fd, json, strlen(json));
-        write(client_fd, "\n", 1);
-        free(json);
-        printf("[CLIENT] Devicelist response sent\n");
-    } else {
-        printf("[CLIENT] ✗ Failed to generate devicelist JSON\n");
-        char *error = create_error_response("Failed to generate device list");
-        write(client_fd, error, strlen(error));
-        write(client_fd, "\n", 1);
-        free(error);
-    }
+    write(client_fd, json, strlen(json));
+    write(client_fd, "\n", 1);
+    free(json);
 }
 
 static void handle_reinit_command(int client_fd, json_t *params)
