@@ -27,6 +27,8 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/stat.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <fcntl.h>
 #include <pthread.h>
 
@@ -66,13 +68,17 @@
 #include <jansson.h>
 
 /* Configuration */
-#define SOCKET_PATH "/tmp/bacnetStackc.sock"
+#define DEFAULT_SOCKET_PORT 1235
 #define MAX_BUFFER_SIZE 65536
 #define BACNET_PORT 0xBAC0
-#define BACNET_INTERFACE "eth0"
+#define DEFAULT_BACNET_INTERFACE NULL
 #define BACNET_BBMD_ADDRESS NULL
 #define BACNET_BBMD_PORT 0xBAC0
 #define BACNET_BBMD_TTL 90
+
+/* Runtime configuration */
+static int socket_port = DEFAULT_SOCKET_PORT;
+static char pid_file_path[256] = {0};
 
 /* Client state */
 static volatile bool running = true;
@@ -239,7 +245,11 @@ static void cleanup(void)
     /* Close socket */
     if (socket_fd >= 0) {
         close(socket_fd);
-        unlink(SOCKET_PATH);
+    }
+    
+    /* Remove PID file */
+    if (pid_file_path[0] != '\0') {
+        unlink(pid_file_path);
     }
     
     /* Cleanup datalink */
@@ -1273,28 +1283,46 @@ static void process_socket_command(int client_fd, const char *json_cmd)
  */
 int main(int argc, char *argv[])
 {
-    struct sockaddr_un server_addr;
+    struct sockaddr_in server_addr;
     int client_fd;
     char buffer[MAX_BUFFER_SIZE];
     ssize_t bytes_read;
+    int i;
+    FILE *pid_fp;
     
-    (void)argc;
-    (void)argv;
+    /* Parse command line arguments */
+    for (i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--socketport") == 0 && i + 1 < argc) {
+            socket_port = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--pid") == 0 && i + 1 < argc) {
+            strncpy(pid_file_path, argv[++i], sizeof(pid_file_path) - 1);
+        }
+    }
     
     printf("BACnet Stack Client v1.0\n");
-    printf("Socket: %s\n", SOCKET_PATH);
+    printf("Socket port: %d\n", socket_port);
+    
+    /* Write PID file if specified */
+    if (pid_file_path[0] != '\0') {
+        pid_fp = fopen(pid_file_path, "w");
+        if (pid_fp) {
+            fprintf(pid_fp, "%d\n", getpid());
+            fclose(pid_fp);
+            printf("PID %d written to %s\n", getpid(), pid_file_path);
+        }
+    }
     
     /* Setup signal handlers */
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
     
     /* Initialize BACnet datalink */
-    if (!datalink_init(BACNET_INTERFACE)) {
-        fprintf(stderr, "Failed to initialize datalink on %s\n", BACNET_INTERFACE);
+    if (!datalink_init(DEFAULT_BACNET_INTERFACE)) {
+        fprintf(stderr, "Failed to initialize datalink\n");
         return 1;
     }
     
-    printf("BACnet datalink initialized on %s\n", BACNET_INTERFACE);
+    printf("BACnet datalink initialized\n");
     
     /* Set handlers */
     apdu_set_unconfirmed_handler(SERVICE_UNCONFIRMED_I_AM, my_i_am_handler);
@@ -1320,9 +1348,8 @@ int main(int argc, char *argv[])
         return 1;
     }
     
-    /* Create Unix domain socket */
-    unlink(SOCKET_PATH);
-    socket_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    /* Create TCP socket */
+    socket_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (socket_fd < 0) {
         perror("socket");
         running = false;
@@ -1331,9 +1358,16 @@ int main(int argc, char *argv[])
         return 1;
     }
     
+    /* Allow socket reuse */
+    {
+        int reuse = 1;
+        setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+    }
+    
     memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sun_family = AF_UNIX;
-    strncpy(server_addr.sun_path, SOCKET_PATH, sizeof(server_addr.sun_path) - 1);
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    server_addr.sin_port = htons(socket_port);
     
     if (bind(socket_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
         perror("bind");
@@ -1344,19 +1378,16 @@ int main(int argc, char *argv[])
         return 1;
     }
     
-    chmod(SOCKET_PATH, 0666);
-    
     if (listen(socket_fd, 5) < 0) {
         perror("listen");
         close(socket_fd);
-        unlink(SOCKET_PATH);
         running = false;
         pthread_join(network_thread, NULL);
         datalink_cleanup();
         return 1;
     }
     
-    printf("Listening on socket %s\n", SOCKET_PATH);
+    printf("Listening on TCP port %d\n", socket_port);
     printf("Client ready. Press Ctrl+C to exit.\n");
     
     /* Main socket loop */
