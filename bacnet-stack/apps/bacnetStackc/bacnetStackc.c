@@ -1057,6 +1057,9 @@ static void handle_readprop_command(int client_fd, json_t *params)
         array_index = json_integer_value(array_obj);
     }
     
+    /* Get device ID */
+    uint32_t device_id = json_integer_value(device_obj);
+    
     /* Send ReadProperty request */
     uint8_t invoke_id = tsm_next_free_invokeID();
     if (invoke_id == 0) {
