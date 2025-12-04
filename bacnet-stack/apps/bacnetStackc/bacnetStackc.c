@@ -306,12 +306,15 @@ static void my_i_am_handler(
     unsigned max_apdu = 0;
     int segmentation = 0;
     uint16_t vendor_id = 0;
+    int len = 0;
     
     printf("[CLIENT] I-Am handler called (service_len=%u)\n", service_len);
     fflush(stdout);
     
-    if (bacnet_iam_request_decode(service_request, service_len,
-                                   &device_id, &max_apdu, &segmentation, &vendor_id)) {
+    len = iam_decode_service_request(service_request, &device_id, &max_apdu, 
+                                     &segmentation, &vendor_id);
+    
+    if (len > 0) {
         printf("[CLIENT] ✓ I-Am decoded: Device %u, Max APDU %u, Vendor %u\n",
                device_id, max_apdu, vendor_id);
         fflush(stdout);
@@ -329,7 +332,7 @@ static void my_i_am_handler(
         printf("[CLIENT] ✓ Device %u added to device_list\n", device_id);
         fflush(stdout);
     } else {
-        printf("[CLIENT] ✗ Failed to decode I-Am message\n");
+        printf("[CLIENT] ✗ Failed to decode I-Am message (len=%d)\n", len);
         fflush(stdout);
     }
 }
