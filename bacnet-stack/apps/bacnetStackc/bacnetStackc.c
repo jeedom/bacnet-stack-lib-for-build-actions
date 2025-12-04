@@ -54,6 +54,7 @@
 #include "bacnet/datetime.h"
 #include "bacnet/bacapp.h"
 #include "bacnet/bacdcode.h"
+#include "bacnet/dcc.h"
 #include "bacnet/datalink/datalink.h"
 #include "bacnet/datalink/bip.h"
 #include "bacnet/basic/binding/address.h"
@@ -1572,6 +1573,12 @@ int main(int argc, char *argv[])
     if (bacnet_iface) free(bacnet_iface);
     
     printf("[CLIENT] ✓ BACnet datalink initialized successfully\n");
+    fflush(stdout);
+    
+    /* Initialize Device Communication Control (DCC) */
+    /* Enable communication by default - required for Who-Is to work */
+    dcc_set_status_duration(COMMUNICATION_ENABLE, 0);
+    printf("[CLIENT] ✓ Device Communication Control initialized (ENABLED)\n");
     fflush(stdout);
     
     /* Verify datalink is functional */
