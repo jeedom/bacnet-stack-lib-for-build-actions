@@ -63,6 +63,7 @@
 #include "bacnet/basic/service/s_rpm.h"
 #include "bacnet/basic/service/s_wp.h"
 #include "bacnet/basic/service/s_readrange.h"
+#include "bacnet/basic/sys/mstimer.h"
 
 /* JSON parsing */
 #include <jansson.h>
@@ -1041,7 +1042,7 @@ static char *create_success_response(const char *message)
 }
 
 /*
- * Command handlers - To be implemented
+ * Command handlers
  */
 
 static void handle_whois_command(int client_fd, json_t *params)
@@ -1068,13 +1069,6 @@ static void handle_whois_command(int client_fd, json_t *params)
         device_max = 4194303;  /* 0x3FFFFF - maximum 22-bit Device Instance */
     }
     
-    /* Validation: if only one is specified, use it for both */
-    if (device_min >= 0 && device_max < 0) {
-        device_max = device_min;
-    } else if (device_max >= 0 && device_min < 0) {
-        device_min = device_max;
-    }
-    
     /* Validation: min must be <= max */
     if (device_min > device_max) {
         int32_t tmp = device_min;
@@ -1086,25 +1080,83 @@ static void handle_whois_command(int client_fd, json_t *params)
     if (device_min < 0) device_min = 0;
     if (device_max > 4194303) device_max = 4194303;
     
+    /* Verify datalink is ready */
+    BACNET_ADDRESS bcast;
+    if (!datalink_get_broadcast_address(&bcast)) {
+        printf("[CLIENT] ✗ Failed to get broadcast address\n");
+        fflush(stdout);
+        char *error = create_error_response("Broadcast address not available");
+        write(client_fd, error, strlen(error));
+        write(client_fd, "\n", 1);
+        free(error);
+        return;
+    }
+    
+    printf("[CLIENT] DEBUG: Broadcast MAC len=%d, net=%u\n", 
+           bcast.mac_len, bcast.net);
+    fflush(stdout);
+    
     /* Send Who-Is */
-    printf("[CLIENT] Sending Who-Is broadcast (min=%d, max=%d)\n", device_min, device_max);
+    printf("[CLIENT] Sending Who-Is broadcast (min=%d, max=%d)\n", 
+           device_min, device_max);
     fflush(stdout);
     
     errno = 0;
-    Send_WhoIs((int32_t)device_min, (int32_t)device_max);
     
-    if (errno != 0) {
-        printf("[CLIENT] ⚠ Warning after Send_WhoIs: %s (errno=%d)\n", strerror(errno), errno);
+    /* Try standard Send_WhoIs first */
+    bool success = Send_WhoIs((int32_t)device_min, (int32_t)device_max);
+    
+    if (!success || errno != 0) {
+        printf("[CLIENT] ✗ Send_WhoIs failed: %s (errno=%d)\n", 
+               strerror(errno), errno);
         fflush(stdout);
+        
+        /* Try alternative approach: manual Who-Is broadcast */
+        printf("[CLIENT] Attempting manual Who-Is broadcast...\n");
+        fflush(stdout);
+        
+        uint8_t buffer[MAX_MPDU];
+        BACNET_NPDU_DATA npdu_data;
+        int len = 0;
+        int pdu_len = 0;
+        
+        /* Encode NPDU */
+        npdu_encode_npdu_data(&npdu_data, false, MESSAGE_PRIORITY_NORMAL);
+        pdu_len = npdu_encode_pdu(&buffer[0], NULL, NULL, &npdu_data);
+        
+        /* Encode Who-Is APDU */
+        len = whois_encode_apdu(&buffer[pdu_len], device_min, device_max);
+        pdu_len += len;
+        
+        printf("[CLIENT] DEBUG: Encoded Who-Is PDU: %d bytes\n", pdu_len);
+        fflush(stdout);
+        
+        /* Send via datalink */
+        int bytes_sent = datalink_send_pdu(&bcast, &npdu_data, &buffer[0], pdu_len);
+        
+        if (bytes_sent > 0) {
+            printf("[CLIENT] ✓ Manual Who-Is sent (%d bytes)\n", bytes_sent);
+            fflush(stdout);
+            char *response = create_success_response("Who-Is sent (manual)");
+            write(client_fd, response, strlen(response));
+            write(client_fd, "\n", 1);
+            free(response);
+        } else {
+            printf("[CLIENT] ✗ Manual Who-Is also failed (bytes_sent=%d)\n", bytes_sent);
+            fflush(stdout);
+            char *error = create_error_response("Failed to send Who-Is");
+            write(client_fd, error, strlen(error));
+            write(client_fd, "\n", 1);
+            free(error);
+        }
     } else {
         printf("[CLIENT] ✓ Who-Is broadcast sent successfully\n");
         fflush(stdout);
+        char *response = create_success_response("Who-Is sent");
+        write(client_fd, response, strlen(response));
+        write(client_fd, "\n", 1);
+        free(response);
     }
-    
-    char *response = create_success_response("Who-Is sent");
-    write(client_fd, response, strlen(response));
-    write(client_fd, "\n", 1);
-    free(response);
 }
 
 static void handle_iam_command(int client_fd, json_t *params)
@@ -1484,12 +1536,32 @@ int main(int argc, char *argv[])
     setbuf(stdout, NULL);
     setbuf(stderr, NULL);
     
+    /* Read environment variables for BACnet configuration */
+    const char *bacnet_iface = getenv("BACNET_IFACE");
+    const char *bacnet_port_str = getenv("BACNET_IP_PORT");
+    
+    if (bacnet_iface) {
+        printf("[CLIENT] Using BACnet interface from env: %s\n", bacnet_iface);
+        fflush(stdout);
+    }
+    
+    if (bacnet_port_str) {
+        int env_port = atoi(bacnet_port_str);
+        if (env_port > 0 && env_port <= 65535) {
+            printf("[CLIENT] Using BACnet port from env: %d\n", env_port);
+            fflush(stdout);
+        }
+    }
+    
     /* Initialize BACnet datalink */
     printf("[CLIENT] Initializing BACnet datalink (interface: %s)...\n", 
-           DEFAULT_BACNET_INTERFACE ? DEFAULT_BACNET_INTERFACE : "auto-detect");
+           bacnet_iface ? bacnet_iface : "auto-detect");
     fflush(stdout);
     
-    if (!datalink_init(DEFAULT_BACNET_INTERFACE)) {
+    /* Set the BACnet/IP port BEFORE datalink_init */
+    bip_set_port(BACNET_PORT);
+    
+    if (!datalink_init(bacnet_iface)) {
         fprintf(stderr, "[CLIENT] ✗ Failed to initialize datalink\n");
         fflush(stderr);
         return 1;
@@ -1503,13 +1575,27 @@ int main(int argc, char *argv[])
     datalink_get_my_address(&my_addr);
     printf("[CLIENT] DEBUG: My BACnet address - MAC len=%d, net=%u\n", 
            my_addr.mac_len, my_addr.net);
+    if (my_addr.mac_len >= 6) {
+        printf("[CLIENT] DEBUG: My IP: %u.%u.%u.%u:%u\n",
+               my_addr.mac[0], my_addr.mac[1], my_addr.mac[2], my_addr.mac[3],
+               (my_addr.mac[4] << 8) | my_addr.mac[5]);
+    }
     fflush(stdout);
     
     BACNET_ADDRESS bcast_addr;
-    datalink_get_broadcast_address(&bcast_addr);
-    printf("[CLIENT] DEBUG: Broadcast address - MAC len=%d, net=%u\n", 
-           bcast_addr.mac_len, bcast_addr.net);
-    fflush(stdout);
+    if (datalink_get_broadcast_address(&bcast_addr)) {
+        printf("[CLIENT] DEBUG: Broadcast address - MAC len=%d, net=%u\n", 
+               bcast_addr.mac_len, bcast_addr.net);
+        if (bcast_addr.mac_len >= 6) {
+            printf("[CLIENT] DEBUG: Broadcast IP: %u.%u.%u.%u:%u\n",
+                   bcast_addr.mac[0], bcast_addr.mac[1], bcast_addr.mac[2], bcast_addr.mac[3],
+                   (bcast_addr.mac[4] << 8) | bcast_addr.mac[5]);
+        }
+        fflush(stdout);
+    } else {
+        fprintf(stderr, "[CLIENT] ⚠ WARNING: Could not get broadcast address\n");
+        fflush(stderr);
+    }
     
     printf("[CLIENT] BACnet/IP port: 47808 (0xBAC0)\n");
     fflush(stdout);
