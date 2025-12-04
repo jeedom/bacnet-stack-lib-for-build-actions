@@ -1075,6 +1075,7 @@ static void handle_whois_command(int client_fd, json_t *params)
     
     /* Send Who-Is */
     printf("[CLIENT] Sending Who-Is broadcast (min=%d, max=%d)\n", device_min, device_max);
+    fflush(stdout);
     
     /* Check errno before sending */
     errno = 0;
@@ -1082,11 +1083,13 @@ static void handle_whois_command(int client_fd, json_t *params)
     /* Use Send_WhoIs_Global for broadcast, or Send_WhoIs for specific range */
     if (device_min < 0 || device_max < 0) {
         /* Global broadcast (all devices) */
-        printf("[CLIENT] Using global Who-Is broadcast\n");
-        Send_WhoIs_Global(-1, -1);
+        printf("[CLIENT] Using global Who-Is broadcast (no device range)\n");
+        fflush(stdout);
+        Send_WhoIs_Global();  /* ✓ CORRECTION: No parameters needed */
     } else {
         /* Specific device range */
         printf("[CLIENT] Using targeted Who-Is for range [%d-%d]\n", device_min, device_max);
+        fflush(stdout);
         Send_WhoIs(device_min, device_max);
     }
     
