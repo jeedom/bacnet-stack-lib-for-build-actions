@@ -1059,6 +1059,9 @@ static void handle_whois_command(int client_fd, json_t *params)
     json_t *max_obj;
     char *response;
     
+    printf("[CLIENT] ═══ handle_whois_command CALLED (v2024-12-05-fix) ═══\n");
+    fflush(stdout);
+    
     min_obj = json_object_get(params, "deviceMin");
     max_obj = json_object_get(params, "deviceMax");
     
@@ -1068,6 +1071,10 @@ static void handle_whois_command(int client_fd, json_t *params)
     if (max_obj && json_is_integer(max_obj)) {
         device_max = json_integer_value(max_obj);
     }
+    
+    printf("[CLIENT] DEBUG: Raw params - deviceMin=%d, deviceMax=%d\n", 
+           device_min, device_max);
+    fflush(stdout);
     
     /* BACnet Who-Is requires valid Device Instance range (0 to 4194303)
      * Convert -1 (unlimited) to full range */
@@ -1092,6 +1099,7 @@ static void handle_whois_command(int client_fd, json_t *params)
     /* Send Who-Is */
     printf("[CLIENT] Sending Who-Is broadcast (min=%d, max=%d)\n", 
            device_min, device_max);
+    printf("[CLIENT] DEBUG: Using Send_WhoIs_Global() - FIXED VERSION\n");
     fflush(stdout);
     
     /* Use Send_WhoIs_Global for proper BACnet/IP broadcast
@@ -1461,6 +1469,10 @@ int main(int argc, char *argv[])
     }
     
     printf("BACnet Stack Client v1.0\n");
+    printf("═══════════════════════════════════════════════════════\n");
+    printf("BUILD DATE: %s %s\n", __DATE__, __TIME__);
+    printf("VERSION: 2024-12-05-whois-fix (Send_WhoIs_Global)\n");
+    printf("═══════════════════════════════════════════════════════\n");
     fflush(stdout);
     printf("Socket port: %d\n", socket_port);
     fflush(stdout);
