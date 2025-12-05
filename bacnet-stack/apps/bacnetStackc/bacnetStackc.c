@@ -1059,7 +1059,7 @@ static void handle_whois_command(int client_fd, json_t *params)
     json_t *max_obj;
     char *response;
     
-    printf("[CLIENT] ═══ handle_whois_command CALLED (v2024-12-05-fix) ═══\n");
+    printf("[CLIENT] ═══ handle_whois_command CALLED (v2024-12-05-bip-port-fix) ═══\n");
     fflush(stdout);
     
     min_obj = json_object_get(params, "deviceMin");
@@ -1471,7 +1471,7 @@ int main(int argc, char *argv[])
     printf("BACnet Stack Client v1.0\n");
     printf("═══════════════════════════════════════════════════════\n");
     printf("BUILD DATE: %s %s\n", __DATE__, __TIME__);
-    printf("VERSION: 2024-12-05-whois-fix (Send_WhoIs_Global)\n");
+    printf("VERSION: 2024-12-05-bip-port-fix (bip_set_port added)\n");
     printf("═══════════════════════════════════════════════════════\n");
     fflush(stdout);
     printf("Socket port: %d\n", socket_port);
@@ -1500,6 +1500,7 @@ int main(int argc, char *argv[])
     const char *bacnet_iface_const = getenv("BACNET_IFACE");
     const char *bacnet_port_str = getenv("BACNET_IP_PORT");
     char *bacnet_iface = NULL;
+    uint16_t bacnet_port = 0xBAC0;  /* Default BACnet/IP port 47808 */
     
     /* Copy to non-const for datalink_init which expects char* */
     if (bacnet_iface_const) {
@@ -1511,10 +1512,16 @@ int main(int argc, char *argv[])
     if (bacnet_port_str) {
         int env_port = atoi(bacnet_port_str);
         if (env_port > 0 && env_port <= 65535) {
+            bacnet_port = (uint16_t)env_port;
             printf("[CLIENT] Using BACnet port from env: %d\n", env_port);
             fflush(stdout);
         }
     }
+    
+    /* Set BACnet/IP port BEFORE initializing datalink - CRITICAL! */
+    printf("[CLIENT] Setting BACnet/IP port to %u (0x%04X)\n", bacnet_port, bacnet_port);
+    fflush(stdout);
+    bip_set_port(bacnet_port);
     
     /* Initialize BACnet datalink */
     printf("[CLIENT] Initializing BACnet datalink (interface: %s)...\n", 
