@@ -842,6 +842,15 @@ static int createSocket(const struct sockaddr_in *sin)
         close(sock_fd);
         return status;
     }
+    /* Allow multiple processes to bind to the same port */
+    status = setsockopt(
+        sock_fd, SOL_SOCKET, SO_REUSEPORT, &sockopt, sizeof(sockopt));
+    if (status < 0) {
+        if (BIP_Debug) {
+            perror("SO_REUSEPORT: ");
+        }
+        /* Non-fatal - continue without SO_REUSEPORT */
+    }
     /* allow us to send a broadcast */
     status = setsockopt(
         sock_fd, SOL_SOCKET, SO_BROADCAST, &sockopt, sizeof(sockopt));
