@@ -958,9 +958,9 @@ static void *network_task(void *arg)
             npdu_handler(&src, &rx_buf[0], pdu_len);
         }
         
-        /* Log every 100 select calls to show we're alive */
-        if (select_calls % 100 == 0) {
-            printf("[CLIENT] Network: select() called %lu times, %lu packets received\n", 
+        /* Log every 1000 select calls to show we're alive (~100 seconds) */
+        if (select_calls % 1000 == 0) {
+            printf("[CLIENT] Network thread : called %lu times, %lu packets received\n", 
                    select_calls, packet_count);
             fflush(stdout);
         }
