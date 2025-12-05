@@ -1446,8 +1446,21 @@ static void handle_objectlist_command(int client_fd, json_t *params)
         return;
     }
     
+    printf("[CLIENT] DEBUG: Address resolved - sending to IP\n");
+    fflush(stdout);
+    
+    /* Get max_apdu from device cache or use default */
+    uint16_t max_apdu = MAX_APDU;
+    DEVICE_ENTRY *dev = find_device(device_id);
+    if (dev) {
+        max_apdu = dev->max_apdu;
+    }
+    
     /* Allocate invoke ID */
     uint8_t invoke_id = tsm_next_free_invokeID();
+    printf("[CLIENT] DEBUG: tsm_next_free_invokeID() = %u\n", invoke_id);
+    fflush(stdout);
+    
     if (invoke_id == 0) {
         char *error = create_error_response("No free invoke IDs available");
         write(client_fd, error, strlen(error));
@@ -1458,14 +1471,21 @@ static void handle_objectlist_command(int client_fd, json_t *params)
     
     /* Prepare request to track response */
     allocate_request(invoke_id);
+    printf("[CLIENT] DEBUG: allocate_request(%u) done\n", invoke_id);
+    fflush(stdout);
     
-    /* Send ReadProperty for device,<deviceId>.object-list */
-    uint8_t sent_invoke_id = Send_Read_Property_Request(
-        device_id,                    /* Target device */
-        OBJECT_DEVICE, device_id,    /* Object: device,<deviceId> */
+    /* Send ReadProperty for device,<deviceId>.object-list - USE ADDRESS VERSION */
+    uint8_t sent_invoke_id = Send_Read_Property_Request_Address(
+        &addr,                       /* Destination address (CRITICAL!) */
+        max_apdu,                    /* Max APDU size */
+        OBJECT_DEVICE,               /* Object type: device */
+        device_id,                   /* Object instance */
         PROP_OBJECT_LIST,            /* Property: object-list */
         BACNET_ARRAY_ALL             /* Read entire array */
     );
+    
+    printf("[CLIENT] DEBUG: Send_Read_Property_Request_Address() returned invoke_id=%u\n", sent_invoke_id);
+    fflush(stdout);
     
     if (sent_invoke_id == 0) {
         char *error = create_error_response("Failed to send ReadProperty request");
@@ -1483,14 +1503,31 @@ static void handle_objectlist_command(int client_fd, json_t *params)
     time_t start = time(NULL);
     PENDING_REQUEST *req = find_request(sent_invoke_id);
     
+    printf("[CLIENT] DEBUG: Waiting for response (timeout=5s)...\n");
+    fflush(stdout);
+    
+    int wait_count = 0;
     while (!req->completed && (time(NULL) - start) < 5) {
         usleep(50000); /* 50ms */
+        wait_count++;
+        if (wait_count % 20 == 0) { // Every second
+            printf("[CLIENT] DEBUG: Still waiting... (%d seconds elapsed)\n", wait_count / 20);
+            fflush(stdout);
+        }
     }
     
+    printf("[CLIENT] DEBUG: Wait finished. req->completed=%d, req->response_json=%s\n",
+           req->completed, req->response_json ? "YES" : "NULL");
+    fflush(stdout);
+    
     if (req->completed && req->response_json) {
+        printf("[CLIENT] DEBUG: Sending response to client (%zu bytes)\n", strlen(req->response_json));
+        fflush(stdout);
         write(client_fd, req->response_json, strlen(req->response_json));
         write(client_fd, "\n", 1);
     } else {
+        printf("[CLIENT] DEBUG: Timeout - no response received\n");
+        fflush(stdout);
         char *error = create_error_response("Request timeout");
         write(client_fd, error, strlen(error));
         write(client_fd, "\n", 1);
