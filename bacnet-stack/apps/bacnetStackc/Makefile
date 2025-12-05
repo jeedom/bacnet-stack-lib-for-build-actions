@@ -28,12 +28,8 @@ CFLAGS := $(CFLAGS_COMMON) $(INCLUDES) $(PFLAGS)
 LDFLAGS := -Wl,--gc-sections -pthread $(LFLAGS)
 LDLIBS := $(BACNET_LIB_TARGET) -ljansson -lm
 
-CFLAGS := $(CFLAGS_COMMON) $(INCLUDES) $(PFLAGS)
-LDFLAGS := -Wl,--gc-sections -pthread $(LFLAGS)
-LDLIBS := $(BACNET_LIB_TARGET) -ljansson -lm
-
-# Source files
-SRC = bacnetStackc.c
+# Source files - AJOUT DU STUB DCC
+SRC = bacnetStackc.c dcc-stub.c
 
 # Objects
 OBJS := $(SRC:.c=.o)
