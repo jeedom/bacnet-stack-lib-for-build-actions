@@ -219,6 +219,7 @@ static void handle_unsubscribecov_command(int client_fd, json_t *params);
 static void handle_timesync_command(int client_fd, json_t *params);
 static void handle_whohas_command(int client_fd, json_t *params);
 static void handle_devicelist_command(int client_fd, json_t *params);
+static void handle_objectlist_command(int client_fd, json_t *params);
 static void handle_reinit_command(int client_fd, json_t *params);
 static void handle_devicecomm_command(int client_fd, json_t *params);
 
@@ -1394,6 +1395,91 @@ static void handle_devicelist_command(int client_fd, json_t *params)
     }
 }
 
+static void handle_objectlist_command(int client_fd, json_t *params)
+{
+    /* Parse parameters */
+    json_t *device_obj = json_object_get(params, "device");
+    json_t *ip_obj = json_object_get(params, "ip");
+    
+    if (!device_obj) {
+        char *error = create_error_response("Missing required parameter: device");
+        write(client_fd, error, strlen(error));
+        write(client_fd, "\n", 1);
+        free(error);
+        return;
+    }
+    
+    uint32_t device_id = json_integer_value(device_obj);
+    
+    printf("[CLIENT] Reading object-list from device %u\n", device_id);
+    fflush(stdout);
+    
+    /* Resolve address: priority ip > device_list */
+    BACNET_ADDRESS addr;
+    bool addr_resolved = false;
+    
+    if (ip_obj && json_is_string(ip_obj)) {
+        /* Direct IP address (PREFERRED) */
+        if (ip_to_bacnet_address(json_string_value(ip_obj), &addr)) {
+            addr_resolved = true;
+        } else {
+            char *error = create_error_response("Invalid IP address format");
+            write(client_fd, error, strlen(error));
+            write(client_fd, "\n", 1);
+            free(error);
+            return;
+        }
+    } else {
+        /* Lookup in device_list */
+        DEVICE_ENTRY *dev = find_device(device_id);
+        if (dev) {
+            addr = dev->address;
+            addr_resolved = true;
+        }
+    }
+    
+    if (!addr_resolved) {
+        char *error = create_error_response("Device not found in cache, provide 'ip' parameter");
+        write(client_fd, error, strlen(error));
+        write(client_fd, "\n", 1);
+        free(error);
+        return;
+    }
+    
+    /* Allocate invoke ID */
+    uint8_t invoke_id = tsm_next_free_invokeID();
+    if (invoke_id == 0) {
+        char *error = create_error_response("No free invoke IDs available");
+        write(client_fd, error, strlen(error));
+        write(client_fd, "\n", 1);
+        free(error);
+        return;
+    }
+    
+    /* Prepare request to read OBJECT_LIST property from device object */
+    PENDING_REQUEST *req = allocate_request(invoke_id);
+    req->client_fd = client_fd;
+    
+    /* Send ReadProperty for device,<deviceId>.object-list */
+    int pdu_len = Send_Read_Property_Request(
+        device_id,                    /* Target device */
+        OBJECT_DEVICE, device_id,    /* Object: device,<deviceId> */
+        PROP_OBJECT_LIST,            /* Property: object-list */
+        BACNET_ARRAY_ALL             /* Read entire array */
+    );
+    
+    if (pdu_len > 0) {
+        printf("[CLIENT] ✓ ReadProperty(object-list) sent to device %u (invoke_id=%u)\n", 
+               device_id, invoke_id);
+        fflush(stdout);
+    } else {
+        char *error = create_error_response("Failed to send ReadProperty request");
+        write(client_fd, error, strlen(error));
+        write(client_fd, "\n", 1);
+        free(error);
+    }
+}
+
 static void handle_reinit_command(int client_fd, json_t *params)
 {
     /* TODO: Implement ReinitializeDevice */
@@ -1464,6 +1550,8 @@ static void process_socket_command(int client_fd, const char *json_cmd)
         handle_whohas_command(client_fd, cmd);
     } else if (strcmp(command, "devicelist") == 0) {
         handle_devicelist_command(client_fd, cmd);
+    } else if (strcmp(command, "objectlist") == 0) {
+        handle_objectlist_command(client_fd, cmd);
     } else if (strcmp(command, "reinit") == 0) {
         handle_reinit_command(client_fd, cmd);
     } else if (strcmp(command, "devicecomm") == 0) {
