@@ -1110,8 +1110,10 @@ static void handle_whois_command(int client_fd, json_t *params)
     
     errno = 0;
     
-    /* Send_WhoIs is void - just call it */
-    Send_WhoIs((int32_t)device_min, (int32_t)device_max);
+    /* Use Send_WhoIs_Local instead of Send_WhoIs to avoid net=65535 issue
+     * Send_WhoIs_Local sends a local broadcast (mac_len=0, net=0)
+     * which works correctly with BACnet/IP */
+    Send_WhoIs_Local((int32_t)device_min, (int32_t)device_max);
     
     if (errno != 0) {
         printf("[CLIENT] ✗ Send_WhoIs returned errno: %s (errno=%d)\n", 
