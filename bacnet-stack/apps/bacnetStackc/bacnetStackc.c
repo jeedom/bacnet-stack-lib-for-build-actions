@@ -934,6 +934,7 @@ static void *network_task(void *arg)
 {
     (void)arg;
     unsigned long packet_count = 0;
+    unsigned long select_calls = 0;
     BACNET_ADDRESS src = {0};  /* source address */
     uint8_t rx_buf[MAX_MPDU] = {0};  /* receive buffer */
     uint16_t pdu_len = 0;
@@ -942,16 +943,26 @@ static void *network_task(void *arg)
     fflush(stdout);
     
     while (running) {
+        select_calls++;
+        
         /* Process BACnet messages - MUST provide buffers! */
         pdu_len = datalink_receive(&src, &rx_buf[0], MAX_MPDU, 100);
         
         if (pdu_len > 0) {
             packet_count++;
-            printf("[CLIENT] Network: received packet #%lu (len=%u)\n", packet_count, pdu_len);
+            printf("[CLIENT] Network: received packet #%lu (len=%u, total selects=%lu)\n", 
+                   packet_count, pdu_len, select_calls);
             fflush(stdout);
             
             /* Process the received PDU */
             npdu_handler(&src, &rx_buf[0], pdu_len);
+        }
+        
+        /* Log every 100 select calls to show we're alive */
+        if (select_calls % 100 == 0) {
+            printf("[CLIENT] Network: select() called %lu times, %lu packets received\n", 
+                   select_calls, packet_count);
+            fflush(stdout);
         }
         
         /* Process TSM timeouts */
@@ -966,7 +977,8 @@ static void *network_task(void *arg)
         }
     }
     
-    printf("Network task stopped (total packets: %lu)\n", packet_count);
+    printf("Network task stopped (total packets: %lu, total selects: %lu)\n", 
+           packet_count, select_calls);
     fflush(stdout);
     return NULL;
 }

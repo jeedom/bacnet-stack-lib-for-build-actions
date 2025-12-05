@@ -19,6 +19,7 @@ CFLAGS_COMMON := -std=gnu89 -Os -Wall -Wextra -pedantic \
                  -DBACDL_BIP=1 -DPRINT_ENABLED=1 \
                  -DBACAPP_ALL \
                  -DBACNET_PROPERTY_LISTS=1 -DBACNET_PROTOCOL_REVISION=24 \
+                 -DBACNET_IP_BROADCAST_USE_INADDR_ANY=1 \
                  -ffunction-sections -fdata-sections
 
 INCLUDES := -I$(BACNET_SRC_DIR) -I$(PORTS_LINUX) -I$(PORTS_POSIX) \
@@ -45,7 +46,8 @@ $(TARGET_BIN): $(OBJS) $(BACNET_LIB_TARGET)
 
 $(BACNET_LIB_TARGET):
 	@echo "Building BACnet library..."
-	( cd $(BACNET_LIB_DIR) ; $(MAKE) clean ; $(MAKE) -s )
+	( cd $(BACNET_LIB_DIR) ; $(MAKE) clean ; \
+	  $(MAKE) -s BACNET_DEFINES="-DBACNET_IP_BROADCAST_USE_INADDR_ANY=1" )
 
 .c.o:
 	$(CC) -c $(CFLAGS) $< -o $@
