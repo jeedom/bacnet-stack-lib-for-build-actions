@@ -1057,14 +1057,7 @@ static void handle_whois_command(int client_fd, json_t *params)
     int32_t device_max = -1;
     json_t *min_obj;
     json_t *max_obj;
-    BACNET_ADDRESS bcast;
-    uint8_t buffer[MAX_MPDU];
-    BACNET_NPDU_DATA npdu_data;
-    int len = 0;
-    int pdu_len = 0;
-    int bytes_sent;
     char *response;
-    char *error;
     
     min_obj = json_object_get(params, "deviceMin");
     max_obj = json_object_get(params, "deviceMax");
@@ -1096,71 +1089,22 @@ static void handle_whois_command(int client_fd, json_t *params)
     if (device_min < 0) device_min = 0;
     if (device_max > 4194303) device_max = 4194303;
     
-    /* Get broadcast address (void function) */
-    datalink_get_broadcast_address(&bcast);
-    
-    printf("[CLIENT] DEBUG: Broadcast MAC len=%d, net=%u\n", 
-           bcast.mac_len, bcast.net);
-    fflush(stdout);
-    
     /* Send Who-Is */
     printf("[CLIENT] Sending Who-Is broadcast (min=%d, max=%d)\n", 
            device_min, device_max);
     fflush(stdout);
     
-    errno = 0;
+    /* Use Send_WhoIs_Global for proper BACnet/IP broadcast
+     * This function correctly handles the broadcast address and network configuration
+     */
+    Send_WhoIs_Global((int32_t)device_min, (int32_t)device_max);
     
-    /* Use Send_WhoIs_Local instead of Send_WhoIs to avoid net=65535 issue
-     * Send_WhoIs_Local sends a local broadcast (mac_len=0, net=0)
-     * which works correctly with BACnet/IP */
-    Send_WhoIs_Local((int32_t)device_min, (int32_t)device_max);
-    
-    if (errno != 0) {
-        printf("[CLIENT] ✗ Send_WhoIs returned errno: %s (errno=%d)\n", 
-               strerror(errno), errno);
-        fflush(stdout);
-        
-        /* Try alternative approach: manual Who-Is broadcast */
-        printf("[CLIENT] Attempting manual Who-Is broadcast...\n");
-        fflush(stdout);
-        
-        /* Encode NPDU */
-        npdu_encode_npdu_data(&npdu_data, false, MESSAGE_PRIORITY_NORMAL);
-        pdu_len = npdu_encode_pdu(&buffer[0], NULL, NULL, &npdu_data);
-        
-        /* Encode Who-Is APDU */
-        len = whois_encode_apdu(&buffer[pdu_len], device_min, device_max);
-        pdu_len += len;
-        
-        printf("[CLIENT] DEBUG: Encoded Who-Is PDU: %d bytes\n", pdu_len);
-        fflush(stdout);
-        
-        /* Send via datalink */
-        bytes_sent = datalink_send_pdu(&bcast, &npdu_data, &buffer[0], pdu_len);
-        
-        if (bytes_sent > 0) {
-            printf("[CLIENT] ✓ Manual Who-Is sent (%d bytes)\n", bytes_sent);
-            fflush(stdout);
-            response = create_success_response("Who-Is sent (manual)");
-            write(client_fd, response, strlen(response));
-            write(client_fd, "\n", 1);
-            free(response);
-        } else {
-            printf("[CLIENT] ✗ Manual Who-Is also failed (bytes_sent=%d)\n", bytes_sent);
-            fflush(stdout);
-            error = create_error_response("Failed to send Who-Is");
-            write(client_fd, error, strlen(error));
-            write(client_fd, "\n", 1);
-            free(error);
-        }
-    } else {
-        printf("[CLIENT] ✓ Who-Is broadcast sent successfully\n");
-        fflush(stdout);
-        response = create_success_response("Who-Is sent");
-        write(client_fd, response, strlen(response));
-        write(client_fd, "\n", 1);
-        free(response);
-    }
+    printf("[CLIENT] ✓ Who-Is broadcast sent successfully\n");
+    fflush(stdout);
+    response = create_success_response("Who-Is sent");
+    write(client_fd, response, strlen(response));
+    write(client_fd, "\n", 1);
+    free(response);
 }
 
 static void handle_iam_command(int client_fd, json_t *params)
