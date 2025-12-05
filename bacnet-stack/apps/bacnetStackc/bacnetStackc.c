@@ -1460,14 +1460,14 @@ static void handle_objectlist_command(int client_fd, json_t *params)
     allocate_request(invoke_id);
     
     /* Send ReadProperty for device,<deviceId>.object-list */
-    int pdu_len = Send_Read_Property_Request(
+    uint8_t sent_invoke_id = Send_Read_Property_Request(
         device_id,                    /* Target device */
         OBJECT_DEVICE, device_id,    /* Object: device,<deviceId> */
         PROP_OBJECT_LIST,            /* Property: object-list */
         BACNET_ARRAY_ALL             /* Read entire array */
     );
     
-    if (pdu_len <= 0) {
+    if (sent_invoke_id == 0) {
         char *error = create_error_response("Failed to send ReadProperty request");
         write(client_fd, error, strlen(error));
         write(client_fd, "\n", 1);
@@ -1476,12 +1476,12 @@ static void handle_objectlist_command(int client_fd, json_t *params)
     }
     
     printf("[CLIENT] ✓ ReadProperty(object-list) sent to device %u (invoke_id=%u)\n", 
-           device_id, invoke_id);
+           device_id, sent_invoke_id);
     fflush(stdout);
     
     /* Wait for response (with timeout) */
     time_t start = time(NULL);
-    PENDING_REQUEST *req = find_request(invoke_id);
+    PENDING_REQUEST *req = find_request(sent_invoke_id);
     
     while (!req->completed && (time(NULL) - start) < 5) {
         usleep(50000); /* 50ms */
