@@ -1422,6 +1422,8 @@ static void handle_objectlist_command(int client_fd, json_t *params)
         /* Direct IP address (PREFERRED) */
         if (ip_to_bacnet_address(json_string_value(ip_obj), &addr)) {
             addr_resolved = true;
+            printf("[CLIENT] DEBUG: Using IP address: %s\n", json_string_value(ip_obj));
+            fflush(stdout);
         } else {
             char *error = create_error_response("Invalid IP address format");
             write(client_fd, error, strlen(error));
@@ -1433,8 +1435,10 @@ static void handle_objectlist_command(int client_fd, json_t *params)
         /* Lookup in device_list */
         DEVICE_ENTRY *dev = find_device(device_id);
         if (dev) {
-            addr = dev->address;
+            bacnet_address_copy(&addr, &dev->address);
             addr_resolved = true;
+            printf("[CLIENT] DEBUG: Using address from device cache\n");
+            fflush(stdout);
         }
     }
     
@@ -1446,9 +1450,6 @@ static void handle_objectlist_command(int client_fd, json_t *params)
         return;
     }
     
-    printf("[CLIENT] DEBUG: Address resolved - sending to IP\n");
-    fflush(stdout);
-    
     /* Get max_apdu from device cache or use default */
     uint16_t max_apdu = MAX_APDU;
     DEVICE_ENTRY *dev = find_device(device_id);
@@ -1456,27 +1457,35 @@ static void handle_objectlist_command(int client_fd, json_t *params)
         max_apdu = dev->max_apdu;
     }
     
-    /* Allocate invoke ID */
-    uint8_t invoke_id = tsm_next_free_invokeID();
-    printf("[CLIENT] DEBUG: tsm_next_free_invokeID() = %u\n", invoke_id);
+    printf("[CLIENT] DEBUG: Using max_apdu=%u for device %u\n", max_apdu, device_id);
     fflush(stdout);
     
+    /* CRITICAL FIX: Get invoke_id BEFORE calling Send function
+     * Because Send_Read_Property_Request_Address calls tsm_next_free_invokeID() internally,
+     * we must get our own invoke_id first to track the request properly */
+    uint8_t invoke_id = tsm_next_free_invokeID();
     if (invoke_id == 0) {
-        char *error = create_error_response("No free invoke IDs available");
+        printf("[CLIENT] ✗ No free invoke_id available\n");
+        fflush(stdout);
+        char *error = create_error_response("No free invoke ID available");
         write(client_fd, error, strlen(error));
         write(client_fd, "\n", 1);
         free(error);
         return;
     }
     
-    /* Prepare request to track response */
-    allocate_request(invoke_id);
-    printf("[CLIENT] DEBUG: allocate_request(%u) done\n", invoke_id);
+    printf("[CLIENT] DEBUG: Allocated invoke_id=%u from TSM\n", invoke_id);
     fflush(stdout);
     
-    /* Send ReadProperty for device,<deviceId>.object-list - USE ADDRESS VERSION */
+    /* Allocate request tracking BEFORE sending */
+    PENDING_REQUEST *req = allocate_request(invoke_id);
+    printf("[CLIENT] DEBUG: Request tracking allocated for invoke_id=%u\n", invoke_id);
+    fflush(stdout);
+    
+    /* Send ReadProperty for PROP_OBJECT_LIST */
+    /* This will internally call tsm_next_free_invokeID() again and should return the same ID */
     uint8_t sent_invoke_id = Send_Read_Property_Request_Address(
-        &addr,                       /* Destination address (CRITICAL!) */
+        &addr,                       /* Destination address */
         max_apdu,                    /* Max APDU size */
         OBJECT_DEVICE,               /* Object type: device */
         device_id,                   /* Object instance */
@@ -1484,15 +1493,31 @@ static void handle_objectlist_command(int client_fd, json_t *params)
         BACNET_ARRAY_ALL             /* Read entire array */
     );
     
-    printf("[CLIENT] DEBUG: Send_Read_Property_Request_Address() returned invoke_id=%u\n", sent_invoke_id);
+    printf("[CLIENT] DEBUG: Send_Read_Property_Request_Address() returned invoke_id=%u (expected %u)\n", 
+           sent_invoke_id, invoke_id);
     fflush(stdout);
     
     if (sent_invoke_id == 0) {
+        printf("[CLIENT] ✗ Send_Read_Property_Request_Address failed\n");
+        fflush(stdout);
         char *error = create_error_response("Failed to send ReadProperty request");
         write(client_fd, error, strlen(error));
         write(client_fd, "\n", 1);
         free(error);
         return;
+    }
+    
+    /* IMPORTANT: The invoke_id returned might NOT match what we got earlier
+     * because the send function calls tsm_next_free_invokeID() again.
+     * We need to update our tracking to use the ACTUAL invoke_id that was sent */
+    if (sent_invoke_id != invoke_id) {
+        printf("[CLIENT] ⚠️  WARNING: invoke_id mismatch! allocated=%u, sent=%u\n", 
+               invoke_id, sent_invoke_id);
+        printf("[CLIENT] DEBUG: Re-allocating tracking for actual invoke_id=%u\n", sent_invoke_id);
+        fflush(stdout);
+        
+        /* Allocate tracking for the ACTUAL invoke_id used */
+        req = allocate_request(sent_invoke_id);
     }
     
     printf("[CLIENT] ✓ ReadProperty(object-list) sent to device %u (invoke_id=%u)\n", 
@@ -1501,37 +1526,49 @@ static void handle_objectlist_command(int client_fd, json_t *params)
     
     /* Wait for response (with timeout) */
     time_t start = time(NULL);
-    PENDING_REQUEST *req = find_request(sent_invoke_id);
+    int wait_seconds = 0;
     
-    printf("[CLIENT] DEBUG: Waiting for response (timeout=5s)...\n");
+    printf("[CLIENT] DEBUG: Waiting for response (timeout=10s)...\n");
     fflush(stdout);
     
-    int wait_count = 0;
-    while (!req->completed && (time(NULL) - start) < 5) {
-        usleep(50000); /* 50ms */
-        wait_count++;
-        if (wait_count % 20 == 0) { // Every second
-            printf("[CLIENT] DEBUG: Still waiting... (%d seconds elapsed)\n", wait_count / 20);
+    while (!req->completed && (time(NULL) - start) < 10) {
+        usleep(100000); /* 100ms */
+        
+        /* Log every second */
+        int elapsed = (int)(time(NULL) - start);
+        if (elapsed > wait_seconds) {
+            wait_seconds = elapsed;
+            printf("[CLIENT] DEBUG: Still waiting... (%d seconds elapsed, req->completed=%d)\n", 
+                   wait_seconds, req->completed);
             fflush(stdout);
         }
     }
     
     printf("[CLIENT] DEBUG: Wait finished. req->completed=%d, req->response_json=%s\n",
-           req->completed, req->response_json ? "YES" : "NULL");
+           req->completed, req->response_json ? "EXISTS" : "NULL");
     fflush(stdout);
     
     if (req->completed && req->response_json) {
-        printf("[CLIENT] DEBUG: Sending response to client (%zu bytes)\n", strlen(req->response_json));
+        printf("[CLIENT] ✓ Response received (%zu bytes)\n", strlen(req->response_json));
         fflush(stdout);
         write(client_fd, req->response_json, strlen(req->response_json));
         write(client_fd, "\n", 1);
     } else {
-        printf("[CLIENT] DEBUG: Timeout - no response received\n");
+        printf("[CLIENT] ✗ Timeout waiting for response (10 seconds)\n");
         fflush(stdout);
-        char *error = create_error_response("Request timeout");
-        write(client_fd, error, strlen(error));
-        write(client_fd, "\n", 1);
-        free(error);
+        
+        /* Check if we got an error */
+        if (req->error && req->response_json) {
+            printf("[CLIENT] DEBUG: Error response: %s\n", req->response_json);
+            fflush(stdout);
+            write(client_fd, req->response_json, strlen(req->response_json));
+            write(client_fd, "\n", 1);
+        } else {
+            char *error = create_error_response("Request timeout - no response from device");
+            write(client_fd, error, strlen(error));
+            write(client_fd, "\n", 1);
+            free(error);
+        }
     }
 }
 
