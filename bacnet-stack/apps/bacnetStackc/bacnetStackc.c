@@ -1121,8 +1121,16 @@ static void handle_whois_command(int client_fd, json_t *params)
     Send_WhoIs_Global((int32_t)device_min, (int32_t)device_max);
     
     printf("[CLIENT] ✓ Who-Is broadcast sent successfully\n");
+    printf("[CLIENT] ⏳ Waiting 4 seconds for I-Am responses...\n");
     fflush(stdout);
-    response = create_success_response("Who-Is sent");
+    
+    /* Wait for I-Am responses - give devices time to respond */
+    sleep(4);
+    
+    printf("[CLIENT] ✓ Wait completed, check device list\n");
+    fflush(stdout);
+    
+    response = create_success_response("Who-Is sent and waited for responses");
     write(client_fd, response, strlen(response));
     write(client_fd, "\n", 1);
     free(response);
