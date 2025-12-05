@@ -933,13 +933,26 @@ static COV_SUBSCRIPTION *find_cov_subscription(uint32_t device_id,
 static void *network_task(void *arg)
 {
     (void)arg;
+    unsigned long packet_count = 0;
+    BACNET_ADDRESS src = {0};  /* source address */
+    uint8_t rx_buf[MAX_MPDU] = {0};  /* receive buffer */
+    uint16_t pdu_len = 0;
     
     printf("Network task started\n");
     fflush(stdout);
     
     while (running) {
-        /* Process BACnet messages */
-        datalink_receive(NULL, NULL, 0, 100);
+        /* Process BACnet messages - MUST provide buffers! */
+        pdu_len = datalink_receive(&src, &rx_buf[0], MAX_MPDU, 100);
+        
+        if (pdu_len > 0) {
+            packet_count++;
+            printf("[CLIENT] Network: received packet #%lu (len=%u)\n", packet_count, pdu_len);
+            fflush(stdout);
+            
+            /* Process the received PDU */
+            npdu_handler(&src, &rx_buf[0], pdu_len);
+        }
         
         /* Process TSM timeouts */
         tsm_timer_milliseconds(100);
@@ -953,7 +966,7 @@ static void *network_task(void *arg)
         }
     }
     
-    printf("Network task stopped\n");
+    printf("Network task stopped (total packets: %lu)\n", packet_count);
     fflush(stdout);
     return NULL;
 }
@@ -1059,7 +1072,7 @@ static void handle_whois_command(int client_fd, json_t *params)
     json_t *max_obj;
     char *response;
     
-    printf("[CLIENT] ═══ handle_whois_command CALLED (v2024-12-05-bip-port-fix) ═══\n");
+    printf("[CLIENT] ═══ handle_whois_command CALLED (v2024-12-05-network-receive-fix) ═══\n");
     fflush(stdout);
     
     min_obj = json_object_get(params, "deviceMin");
@@ -1471,7 +1484,7 @@ int main(int argc, char *argv[])
     printf("BACnet Stack Client v1.0\n");
     printf("═══════════════════════════════════════════════════════\n");
     printf("BUILD DATE: %s %s\n", __DATE__, __TIME__);
-    printf("VERSION: 2024-12-05-bip-port-fix (bip_set_port added)\n");
+    printf("VERSION: 2024-12-05-network-receive-fix (datalink_receive with buffer)\n");
     printf("═══════════════════════════════════════════════════════\n");
     fflush(stdout);
     printf("Socket port: %d\n", socket_port);
