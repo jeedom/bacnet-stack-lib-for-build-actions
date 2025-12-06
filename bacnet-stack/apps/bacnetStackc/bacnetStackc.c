@@ -344,7 +344,6 @@ static void my_i_am_handler(
 /*
  * ReadProperty-ACK handler
  */
-
 static void my_read_property_ack_handler(
     uint8_t *service_request,
     uint16_t service_len,
@@ -354,127 +353,53 @@ static void my_read_property_ack_handler(
     BACNET_READ_PROPERTY_DATA data;
     int len = 0;
     BACNET_APPLICATION_DATA_VALUE value;
-    uint8_t *application_data;
-    int application_data_len;
     
     (void)src;
     
-    printf("[CLIENT] ReadProperty-ACK handler called (invoke_id=%u)\n",
-           service_data->invoke_id);
-    fflush(stdout);
-    
     len = rp_ack_decode_service_request(service_request, service_len, &data);
     if (len > 0) {
-        printf("[CLIENT] ReadProperty-ACK decoded: %s:%u property=%s\n",
-               bactext_object_type_name(data.object_type),
-               data.object_instance,
-               bactext_property_name(data.object_property));
-        fflush(stdout);
+        /* Decode the value */
+        len = bacapp_decode_application_data(data.application_data,
+                                             data.application_data_len, &value);
         
-        json_t *response = json_object();
-        json_object_set_new(response, "status", json_string("success"));
-        json_object_set_new(response, "service", json_string("ReadProperty"));
-        json_object_set_new(response, "invokeId", json_integer(service_data->invoke_id));
-        
-        json_t *result = json_object();
-        json_object_set_new(result, "objectType", 
-                            json_string(bactext_object_type_name(data.object_type)));
-        json_object_set_new(result, "objectInstance", json_integer(data.object_instance));
-        json_object_set_new(result, "property",
-                            json_string(bactext_property_name(data.object_property)));
-        
-        application_data = data.application_data;
-        application_data_len = data.application_data_len;
-        
-        json_t *values_array = json_array();
-        int value_count = 0;
-        
-        for (;;) {
-            len = bacapp_decode_known_array_property(
-                application_data, 
-                (unsigned)application_data_len, 
-                &value,
-                data.object_type, 
-                data.object_property, 
-                data.array_index);
+        if (len >= 0) {
+            /* Create JSON response */
+            json_t *response = json_object();
+            json_object_set_new(response, "status", json_string("success"));
+            json_object_set_new(response, "service", json_string("ReadProperty"));
+            json_object_set_new(response, "invokeId", json_integer(service_data->invoke_id));
             
-            if (len < 0) {
-                printf("[CLIENT] Decode error after %d values\n", value_count);
-                fflush(stdout);
-                break;
+            json_t *result = json_object();
+            json_object_set_new(result, "objectType", 
+                                json_string(bactext_object_type_name(data.object_type)));
+            json_object_set_new(result, "objectInstance", json_integer(data.object_instance));
+            json_object_set_new(result, "property",
+                                json_string(bactext_property_name(data.object_property)));
+            
+            /* Add value based on type */
+            {
+                char value_str[256];
+                BACNET_OBJECT_PROPERTY_VALUE obj_value;
+                obj_value.object_type = data.object_type;
+                obj_value.object_instance = data.object_instance;
+                obj_value.object_property = data.object_property;
+                obj_value.array_index = data.array_index;
+                obj_value.value = &value;
+                bacapp_snprintf_value(value_str, sizeof(value_str), &obj_value);
+                json_object_set_new(result, "value", json_string(value_str));
             }
-            
-            char value_str[256];
-            BACNET_OBJECT_PROPERTY_VALUE obj_value;
-            obj_value.object_type = data.object_type;
-            obj_value.object_instance = data.object_instance;
-            obj_value.object_property = data.object_property;
-            obj_value.array_index = value_count;
-            obj_value.value = &value;
-            bacapp_snprintf_value(value_str, sizeof(value_str), &obj_value);
-            
-            json_array_append_new(values_array, json_string(value_str));
-            value_count++;
-            
-            printf("[CLIENT] Value[%d]: %s\n", value_count - 1, value_str);
-            fflush(stdout);
-            
-            if (len > 0) {
-                if (len < application_data_len) {
-                    application_data += len;
-                    application_data_len -= len;
-                } else {
-                    break;
-                }
-            } else {
-                break;
-            }
-            
-            if (value_count > 10000) {
-                printf("[CLIENT] WARNING: Array limit reached\n");
-                fflush(stdout);
-                break;
-            }
-        }
-        
-        printf("[CLIENT] ✓ Decoded %d values total\n", value_count);
-        fflush(stdout);
-        
-        if (value_count > 1) {
-            json_object_set_new(result, "arraySize", json_integer(value_count));
-            json_object_set_new(result, "values", values_array);
-            json_object_set_new(result, "datatype", json_string("array"));
-        } else if (value_count == 1) {
-            const char *single_value = json_string_value(json_array_get(values_array, 0));
-            json_object_set_new(result, "value", json_string(single_value));
             json_object_set_new(result, "datatype",
                                 json_string(bactext_application_tag_name(value.tag)));
-            json_decref(values_array);
-        } else {
-            json_decref(values_array);
+            
+            json_object_set_new(response, "result", result);
+            
+            char *json_str = json_dumps(response, JSON_COMPACT);
+            complete_request(service_data->invoke_id, json_str, false);
+            free(json_str);
+            json_decref(response);
         }
-        
-        if (data.array_index != BACNET_ARRAY_ALL) {
-            json_object_set_new(result, "arrayIndex", json_integer(data.array_index));
-        }
-        
-        json_object_set_new(response, "result", result);
-        
-        char *json_str = json_dumps(response, JSON_COMPACT);
-        printf("[CLIENT] ✓ Completing request (%zu bytes)\n", strlen(json_str));
-        fflush(stdout);
-        
-        complete_request(service_data->invoke_id, json_str, false);
-        free(json_str);
-        json_decref(response);
-        
-    } else {
-        printf("[CLIENT] ✗ Failed to decode ReadProperty-ACK\n");
-        fflush(stdout);
     }
 }
-
-
 
 /*
  * ReadPropertyMultiple-ACK handler
@@ -1806,10 +1731,10 @@ int main(int argc, char *argv[])
         }
     }
     
-    /* Set BACnet/IP port BEFORE initializing datalink - CRITICAL! */
-    printf("[CLIENT] Setting BACnet/IP port to %u (0x%04X)\n", bacnet_port, bacnet_port);
+    /* Port will be set by dlenv_init() from BACNET_IP_PORT env variable */
+    printf("[CLIENT] Using BACnet/IP port: %u (0x%04X)\n", bacnet_port, bacnet_port);
     fflush(stdout);
-    bip_set_port(bacnet_port);
+    /* bip_set_port(bacnet_port); */  /* DISABLED - dlenv_init() handles this */
     
     /* Initialize BACnet datalink */
     printf("[CLIENT] Initializing BACnet datalink (interface: %s)...\n", 
@@ -1860,7 +1785,8 @@ int main(int argc, char *argv[])
         fflush(stdout);
     }
     
-    printf("[CLIENT] BACnet/IP port: 47808 (0xBAC0)\n");
+    uint16_t actual_port = bip_get_port();
+    printf("[CLIENT] BACnet/IP port: %u (0x%04X)\n", actual_port, actual_port);
     fflush(stdout);
     
     /* Set handlers */
