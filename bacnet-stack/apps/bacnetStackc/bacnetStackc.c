@@ -353,51 +353,83 @@ static void my_read_property_ack_handler(
     BACNET_READ_PROPERTY_DATA data;
     int len = 0;
     BACNET_APPLICATION_DATA_VALUE value;
-    
     (void)src;
     
     len = rp_ack_decode_service_request(service_request, service_len, &data);
     if (len > 0) {
-        /* Decode the value */
-        len = bacapp_decode_application_data(data.application_data,
-                                             data.application_data_len, &value);
+        json_t *response = json_object();
+        json_object_set_new(response, "status", json_string("success"));
+        json_object_set_new(response, "service", json_string("ReadProperty"));
+        json_object_set_new(response, "invokeId", json_integer(service_data->invoke_id));
         
-        if (len >= 0) {
-            /* Create JSON response */
-            json_t *response = json_object();
-            json_object_set_new(response, "status", json_string("success"));
-            json_object_set_new(response, "service", json_string("ReadProperty"));
-            json_object_set_new(response, "invokeId", json_integer(service_data->invoke_id));
+        json_t *result = json_object();
+        json_object_set_new(result, "objectType", 
+                          json_string(bactext_object_type_name(data.object_type)));
+        json_object_set_new(result, "objectInstance", json_integer(data.object_instance));
+        json_object_set_new(result, "property",
+                          json_string(bactext_property_name(data.object_property)));
+        
+        /* Vérifier si c'est un array (object-list, device-object-list, etc.) */
+        if (data.array_index == 0) {
+            /* Array index 0 = demande du count */
+            len = bacapp_decode_application_data(data.application_data,
+                                                data.application_data_len, &value);
+            if (len > 0 && value.tag == BACNET_APPLICATION_TAG_UNSIGNED_INT) {
+                json_object_set_new(result, "arraySize", json_integer(value.type.Unsigned_Int));
+            }
+        } else {
+            /* Décoder TOUTES les valeurs de l'array */
+            json_t *values_array = json_array();
+            uint8_t *application_data = data.application_data;
+            uint32_t application_data_len = data.application_data_len;
+            int array_count = 0;
             
-            json_t *result = json_object();
-            json_object_set_new(result, "objectType", 
-                                json_string(bactext_object_type_name(data.object_type)));
-            json_object_set_new(result, "objectInstance", json_integer(data.object_instance));
-            json_object_set_new(result, "property",
-                                json_string(bactext_property_name(data.object_property)));
-            
-            /* Add value based on type */
-            {
+            /* Boucler sur toutes les valeurs */
+            for (;;) {
+                len = bacapp_decode_known_array_property(
+                    application_data,
+                    application_data_len,
+                    &value,
+                    data.object_type,
+                    data.object_property,
+                    data.array_index);
+                
+                if (len <= 0) {
+                    break;  /* Plus de données */
+                }
+                
+                /* Convertir la valeur en string */
                 char value_str[256];
                 BACNET_OBJECT_PROPERTY_VALUE obj_value;
                 obj_value.object_type = data.object_type;
                 obj_value.object_instance = data.object_instance;
                 obj_value.object_property = data.object_property;
-                obj_value.array_index = data.array_index;
+                obj_value.array_index = BACNET_ARRAY_ALL;
                 obj_value.value = &value;
+                
                 bacapp_snprintf_value(value_str, sizeof(value_str), &obj_value);
-                json_object_set_new(result, "value", json_string(value_str));
+                json_array_append_new(values_array, json_string(value_str));
+                
+                array_count++;
+                application_data += len;
+                application_data_len -= len;
+                
+                if (application_data_len == 0) {
+                    break;
+                }
             }
-            json_object_set_new(result, "datatype",
-                                json_string(bactext_application_tag_name(value.tag)));
             
-            json_object_set_new(response, "result", result);
-            
-            char *json_str = json_dumps(response, JSON_COMPACT);
-            complete_request(service_data->invoke_id, json_str, false);
-            free(json_str);
-            json_decref(response);
+            json_object_set_new(result, "arraySize", json_integer(array_count));
+            json_object_set_new(result, "values", values_array);
+            json_object_set_new(result, "datatype", json_string("array"));
         }
+        
+        json_object_set_new(response, "result", result);
+        
+        char *json_str = json_dumps(response, JSON_COMPACT);
+        complete_request(service_data->invoke_id, json_str, false);
+        free(json_str);
+        json_decref(response);
     }
 }
 
