@@ -56,7 +56,6 @@
 #include "bacnet/bacdcode.h"
 #include "bacnet/dcc.h"
 #include "bacnet/datalink/datalink.h"
-#include "bacnet/datalink/dlenv.h"
 #include "bacnet/datalink/bip.h"
 #include "bacnet/basic/binding/address.h"
 #include "bacnet/basic/services.h"
@@ -1732,14 +1731,10 @@ int main(int argc, char *argv[])
         }
     }
     
-    /* Initialize datalink environment (reads BACNET_IP_PORT, etc.) */
-    dlenv_init();
-    
-    /* Port will be set by dlenv_init() from BACNET_IP_PORT env variable */
-    uint16_t actual_port = bip_get_port();
-    printf("[CLIENT] BACnet/IP port configured: %u (0x%04X)\n", actual_port, actual_port);
+    /* Set BACnet/IP port BEFORE datalink_init (critical!) */
+    printf("[CLIENT] Configuring BACnet/IP port: %u (0x%04X)\n", bacnet_port, bacnet_port);
     fflush(stdout);
-    /* bip_set_port(bacnet_port); */  /* DISABLED - dlenv_init() handles this */
+    bip_set_port(bacnet_port);
     
     /* Initialize BACnet datalink */
     printf("[CLIENT] Initializing BACnet datalink (interface: %s)...\n", 
@@ -1756,6 +1751,11 @@ int main(int argc, char *argv[])
     if (bacnet_iface) free(bacnet_iface);
     
     printf("[CLIENT] ✓ BACnet datalink initialized successfully\n");
+    fflush(stdout);
+    
+    /* Verify port was set correctly */
+    uint16_t actual_port = bip_get_port();
+    printf("[CLIENT] BACnet/IP port active: %u (0x%04X)\n", actual_port, actual_port);
     fflush(stdout);
     
     /* Initialize Device Communication Control (DCC) */
