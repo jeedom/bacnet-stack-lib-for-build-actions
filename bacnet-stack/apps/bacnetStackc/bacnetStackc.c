@@ -1790,7 +1790,6 @@ int main(int argc, char *argv[])
         fflush(stdout);
     }
     
-    uint16_t actual_port = bip_get_port();
     printf("[CLIENT] BACnet/IP port: %u (0x%04X)\n", actual_port, actual_port);
     fflush(stdout);
     
