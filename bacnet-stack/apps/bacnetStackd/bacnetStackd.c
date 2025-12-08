@@ -75,6 +75,10 @@
 /* Variables globales serveur */
 static char g_write_callback_url[512] = {0};
 static json_t *g_config_root = NULL;
+static pthread_t network_thread;
+volatile bool network_thread_running = false;
+static uint8_t Network_Rx_Buf[MAX_MPDU] = { 0 };
+
 extern void TL_Local_Time_To_BAC(BACNET_DATE_TIME *bdatetime, bacnet_time_t seconds);
 
 /* ============================================================================
@@ -4600,6 +4604,61 @@ static void cleanup_json_config(void)
     }
 }
 
+/**
+ * Thread réseau dédié - traite les packets BACnet en continu
+ * 
+ * Ce thread tourne en parallèle de la boucle principale et assure que
+ * TOUS les packets BACnet (requêtes serveur ET réponses client) sont
+ * traités en temps réel, même si la boucle principale est occupée.
+ */
+static void *network_thread_task(void *arg)
+{
+    BACNET_ADDRESS src;
+    uint16_t pdu_len;
+    unsigned long packet_count = 0;
+    time_t last_log = time(NULL);
+    
+    (void)arg;
+    
+    printf("[NETWORK THREAD] Started (dedicated packet processing)\n");
+    fflush(stdout);
+    
+    while (network_thread_running) {
+        /* Recevoir packets BACnet (timeout 100ms pour permettre shutdown propre) */
+        pdu_len = datalink_receive(&src, &Network_Rx_Buf[0], MAX_MPDU, 100);
+        
+        if (pdu_len > 0) {
+            packet_count++;
+            
+            /* Traiter le packet (handlers serveur ET client) */
+            npdu_handler(&src, &Network_Rx_Buf[0], pdu_len);
+            
+            /* Log toutes les 100 packets */
+            if (packet_count % 100 == 0) {
+                printf("[NETWORK THREAD] Processed %lu packets\n", packet_count);
+                fflush(stdout);
+            }
+        }
+        
+        /* Process TSM timeouts (critique pour les opérations client) */
+        tsm_timer_milliseconds(100);
+        
+        /* Log d'activité toutes les 60 secondes */
+        time_t now = time(NULL);
+        if (now - last_log >= 60) {
+            printf("[NETWORK THREAD] Alive - %lu packets processed in last 60s\n", 
+                   packet_count);
+            packet_count = 0;
+            last_log = now;
+            fflush(stdout);
+        }
+    }
+    
+    printf("[NETWORK THREAD] Stopped\n");
+    fflush(stdout);
+    return NULL;
+}
+
 int main(int argc, char *argv[])
 {
     BACNET_ADDRESS src;
@@ -4614,7 +4673,7 @@ int main(int argc, char *argv[])
     
     memset(&src, 0, sizeof(src));
     
-    printf("BACnet Stack Server (Jeedom)\n");
+    printf("BACnet Stack Server (Jeedom) - FIXED NETWORK THREAD\n");
     printf("Version: %s\n", BACNET_VERSION_TEXT);
 
     if (argi < argc && argv[argi][0] != '-') {
@@ -4655,6 +4714,21 @@ int main(int argc, char *argv[])
 
     dlenv_init();
     Init_Service_Handlers();
+    
+    /* ════════════════════════════════════════════════════════════════
+     * DÉMARRER LE THREAD RÉSEAU DÉDIÉ (AVANT atexit)
+     * ════════════════════════════════════════════════════════════════ */
+    printf("═══════════════════════════════════════════════════════════════\n");
+    printf("Starting dedicated network thread...\n");
+    network_thread_running = true;
+    if (pthread_create(&network_thread, NULL, network_thread_task, NULL) != 0) {
+        fprintf(stderr, "ERROR: Failed to create network thread\n");
+        return EXIT_FAILURE;
+    }
+    printf("✓ Network thread started\n");
+    printf("═══════════════════════════════════════════════════════════════\n");
+    fflush(stdout);
+    
     atexit(datalink_cleanup);
 
     /* Register client handlers for discovery and remote operations */
@@ -4670,7 +4744,6 @@ int main(int argc, char *argv[])
     apdu_set_abort_handler(client_abort_handler);
     apdu_set_reject_handler(client_reject_handler);
     printf("Client handlers registered.\n");
-
 
     Device_Object_Name_ANSI_Init(device_name);
     snprintf(buf, sizeof(buf), "Device Name: %s", device_name);
@@ -4698,24 +4771,32 @@ int main(int argc, char *argv[])
     printf("I-Am broadcasted\n");
 
     printf("Entering main loop...\n");
+    printf("NOTE: datalink_receive() handled by network thread\n");
+    fflush(stdout);
+    
+    /* ════════════════════════════════════════════════════════════════
+     * BOUCLE PRINCIPALE (SANS datalink_receive/npdu_handler)
+     * ════════════════════════════════════════════════════════════════ */
     while (!g_shutdown) {
-        pdu_len = datalink_receive(&src, &Rx_Buf[0], MAX_MPDU, timeout);
-        if (pdu_len) {
-            npdu_handler(&src, &Rx_Buf[0], pdu_len);
-        }
-
+        /* ══════════════════════════════════════════════════════════
+         * SUPPRIMÉ: datalink_receive() et npdu_handler()
+         * Ces fonctions sont maintenant gérées par network_thread_task
+         * ══════════════════════════════════════════════════════════ */
+        
+        /* Timer de tâches générales */
         if (mstimer_expired(&BACNET_Task_Timer)) {
             mstimer_reset(&BACNET_Task_Timer);
         }
-        if (mstimer_expired(&BACNET_TSM_Timer)) {
-            mstimer_reset(&BACNET_TSM_Timer);
-            tsm_timer_milliseconds(mstimer_interval(&BACNET_TSM_Timer));
-        }
+        
+        /* SUPPRIMÉ: BACNET_TSM_Timer (géré dans network_thread_task) */
+        
+        /* Timer du cache d'adresses */
         if (mstimer_expired(&BACNET_Address_Timer)) {
             mstimer_reset(&BACNET_Address_Timer);
             address_cache_timer(mstimer_interval(&BACNET_Address_Timer));
         }
         
+        /* Timer des Schedules */
         if (mstimer_expired(&Schedule_PV_Timer)) {
             BACNET_TIME time_of_day;
             BACNET_WEEKDAY wday;
@@ -4807,21 +4888,41 @@ int main(int argc, char *argv[])
             }
         }
 
-    if (mstimer_expired(&Trendlog_Timer)) {
-        mstimer_reset(&Trendlog_Timer);
-        trend_log_timer(1);
+        /* Timer des Trendlogs */
+        if (mstimer_expired(&Trendlog_Timer)) {
+            mstimer_reset(&Trendlog_Timer);
+            trend_log_timer(1);
+        }
+
+        /* Traiter les commandes JSON */
+        process_socket_io();
+        
+        /* Petit sleep pour éviter 100% CPU */
+        usleep(10000);  /* 10ms */
     }
 
-        process_socket_io();
-    }
+    /* ════════════════════════════════════════════════════════════════
+     * CLEANUP - Arrêter le thread réseau proprement
+     * ════════════════════════════════════════════════════════════════ */
+    printf("\n═══════════════════════════════════════════════════════════════\n");
+    printf("Shutting down...\n");
+    printf("Stopping network thread...\n");
+    fflush(stdout);
+    
+    network_thread_running = false;
+    pthread_join(network_thread, NULL);
+    
+    printf("✓ Network thread stopped\n");
+    printf("═══════════════════════════════════════════════════════════════\n");
+    fflush(stdout);
 
     cleanup_json_config();
-
-    printf("Shutting down...\n");
     socket_close_all();
+    
     if (g_pidfile[0]) {
         unlink(g_pidfile);
     }
 
+    printf("Shutdown complete.\n");
     return EXIT_SUCCESS;
 }
