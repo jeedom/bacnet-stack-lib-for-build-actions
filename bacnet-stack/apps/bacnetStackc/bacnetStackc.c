@@ -75,7 +75,7 @@
 #define DEFAULT_SOCKET_PORT 1235
 #define DEFAULT_DEVICE_ID 260002  /* Device ID du client (serveur = 260001) */
 #define MAX_BUFFER_SIZE 65536
-#define BACNET_PORT 0xBAC0  /* Port BACnet/IP standard (47808) - partagé avec serveur mais client ne répond pas aux requêtes */
+#define BACNET_PORT 0xBAC0  /* Port BACnet/IP standard (47808) - NE PAS LANCER CLIENT ET SERVEUR ENSEMBLE! */
 #define DEFAULT_BACNET_INTERFACE NULL
 #define BACNET_BBMD_ADDRESS NULL
 #define BACNET_BBMD_PORT 0xBAC0
@@ -1757,7 +1757,7 @@ int main(int argc, char *argv[])
     const char *bacnet_iface_const = getenv("BACNET_IFACE");
     const char *bacnet_port_str = getenv("BACNET_IP_PORT");
     char *bacnet_iface = NULL;
-    uint16_t bacnet_port = 0xBAC0;  /* Default BACnet/IP port 47808 (standard) - OK car client ne répond pas aux requêtes serveur */
+    uint16_t bacnet_port = 0xBAC0;  /* Port 47808 standard - WARNING: Ne lancez pas client ET serveur sur même machine! */
     
     /* Copy to non-const for datalink_init which expects char* */
     if (bacnet_iface_const) {

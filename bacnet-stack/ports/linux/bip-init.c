@@ -842,7 +842,10 @@ static int createSocket(const struct sockaddr_in *sin)
         close(sock_fd);
         return status;
     }
-    /* Allow multiple processes to bind to the same port (client + server on same machine) */
+    /* NOTE: SO_REUSEPORT disabled - causes issues with client+server on same machine
+     * The kernel distributes unicast responses randomly between processes.
+     * Use different ports or run only one instance per port. */
+    /*
     status = setsockopt(
         sock_fd, SOL_SOCKET, SO_REUSEPORT, &sockopt, sizeof(sockopt));
     if (status < 0) {
@@ -850,6 +853,7 @@ static int createSocket(const struct sockaddr_in *sin)
             perror("SO_REUSEPORT: ");
         }
     }
+    */
 
     /* allow us to send a broadcast */
     status = setsockopt(
