@@ -128,6 +128,11 @@ static void client_abort_handler(BACNET_ADDRESS *src, uint8_t invoke_id,
 static void client_reject_handler(BACNET_ADDRESS *src, uint8_t invoke_id,
     uint8_t reject_reason);
 
+/* Forward declarations for client command handlers */
+static int handle_client_whois(json_t *root);
+static int handle_client_devicelist(json_t *root);
+static int handle_client_objectlist(json_t *root);
+
 /* ============================================================================
  * FIN STRUCTURES CLIENT
  * ============================================================================ */
@@ -3712,22 +3717,28 @@ static bool ip_to_bacnet_address(const char *ip_str, BACNET_ADDRESS *addr)
 
 static char *client_create_error_response(const char *error_msg)
 {
-    json_t *response = json_object();
+    json_t *response;
+    char *json_str;
+    
+    response = json_object();
     json_object_set_new(response, "status", json_string("error"));
     json_object_set_new(response, "error", json_string(error_msg));
     
-    char *json_str = json_dumps(response, JSON_COMPACT);
+    json_str = json_dumps(response, JSON_COMPACT);
     json_decref(response);
     return json_str;
 }
 
 static char *client_create_success_response(const char *message)
 {
-    json_t *response = json_object();
+    json_t *response;
+    char *json_str;
+    
+    response = json_object();
     json_object_set_new(response, "status", json_string("success"));
     json_object_set_new(response, "message", json_string(message));
     
-    char *json_str = json_dumps(response, JSON_COMPACT);
+    json_str = json_dumps(response, JSON_COMPACT);
     json_decref(response);
     return json_str;
 }
@@ -3850,16 +3861,26 @@ static void client_read_property_ack_handler(
 {
     BACNET_READ_PROPERTY_DATA data;
     BACNET_APPLICATION_DATA_VALUE value;
-    int len = 0;
+    int len;
+    json_t *response;
+    json_t *result;
+    json_t *values_array;
+    uint8_t *app_data;
+    uint32_t app_data_len;
+    char value_str[256];
+    BACNET_OBJECT_PROPERTY_VALUE obj_value;
+    char *json_str;
+    
     (void)src;
+    len = 0;
     
     len = rp_ack_decode_service_request(service_request, service_len, &data);
     if (len > 0) {
-        json_t *response = json_object();
+        response = json_object();
         json_object_set_new(response, "status", json_string("success"));
         json_object_set_new(response, "service", json_string("ReadProperty"));
         
-        json_t *result = json_object();
+        result = json_object();
         json_object_set_new(result, "objectType", 
                           json_string(bactext_object_type_name(data.object_type)));
         json_object_set_new(result, "objectInstance", json_integer(data.object_instance));
@@ -3876,16 +3897,14 @@ static void client_read_property_ack_handler(
             }
         } else {
             /* Array values or single value */
-            json_t *values_array = json_array();
-            uint8_t *app_data = data.application_data;
-            uint32_t app_data_len = data.application_data_len;
+            values_array = json_array();
+            app_data = data.application_data;
+            app_data_len = data.application_data_len;
             
             while (app_data_len > 0) {
                 len = bacapp_decode_application_data(app_data, app_data_len, &value);
                 if (len <= 0) break;
                 
-                char value_str[256];
-                BACNET_OBJECT_PROPERTY_VALUE obj_value;
                 obj_value.object_type = data.object_type;
                 obj_value.object_instance = data.object_instance;
                 obj_value.object_property = data.object_property;
@@ -3904,7 +3923,7 @@ static void client_read_property_ack_handler(
         
         json_object_set_new(response, "result", result);
         
-        char *json_str = json_dumps(response, JSON_COMPACT);
+        json_str = json_dumps(response, JSON_COMPACT);
         complete_request(service_data->invoke_id, json_str, false);
         free(json_str);
         json_decref(response);
@@ -3970,14 +3989,17 @@ static void client_error_handler(
     BACNET_ERROR_CLASS error_class,
     BACNET_ERROR_CODE error_code)
 {
+    json_t *response;
+    char *json_str;
+    
     (void)src;
     
-    json_t *response = json_object();
+    response = json_object();
     json_object_set_new(response, "status", json_string("error"));
     json_object_set_new(response, "errorClass", json_string(bactext_error_class_name(error_class)));
     json_object_set_new(response, "errorCode", json_string(bactext_error_code_name(error_code)));
     
-    char *json_str = json_dumps(response, JSON_COMPACT);
+    json_str = json_dumps(response, JSON_COMPACT);
     complete_request(invoke_id, json_str, true);
     free(json_str);
     json_decref(response);
@@ -3989,14 +4011,17 @@ static void client_abort_handler(
     uint8_t abort_reason,
     bool server)
 {
+    json_t *response;
+    char *json_str;
+    
     (void)src;
     (void)server;
     
-    json_t *response = json_object();
+    response = json_object();
     json_object_set_new(response, "status", json_string("aborted"));
     json_object_set_new(response, "reason", json_string(bactext_abort_reason_name(abort_reason)));
     
-    char *json_str = json_dumps(response, JSON_COMPACT);
+    json_str = json_dumps(response, JSON_COMPACT);
     complete_request(invoke_id, json_str, true);
     free(json_str);
     json_decref(response);
@@ -4007,13 +4032,16 @@ static void client_reject_handler(
     uint8_t invoke_id,
     uint8_t reject_reason)
 {
+    json_t *response;
+    char *json_str;
+    
     (void)src;
     
-    json_t *response = json_object();
+    response = json_object();
     json_object_set_new(response, "status", json_string("rejected"));
     json_object_set_new(response, "reason", json_string(bactext_reject_reason_name(reject_reason)));
     
-    char *json_str = json_dumps(response, JSON_COMPACT);
+    json_str = json_dumps(response, JSON_COMPACT);
     complete_request(invoke_id, json_str, true);
     free(json_str);
     json_decref(response);
@@ -4022,11 +4050,17 @@ static void client_reject_handler(
 /* Client command handlers */
 static int handle_client_whois(json_t *root)
 {
-    json_t *cmd_obj = json_object_get(root, "cmd");
-    int32_t device_min = -1;
-    int32_t device_max = -1;
-    json_t *min_obj, *max_obj;
+    json_t *cmd_obj;
+    json_t *min_obj;
+    json_t *max_obj;
+    int32_t device_min;
+    int32_t device_max;
     char *response;
+    int32_t tmp;
+    
+    cmd_obj = json_object_get(root, "cmd");
+    device_min = -1;
+    device_max = -1;
     
     if (!cmd_obj || strcmp(json_string_value(cmd_obj), "whois") != 0) {
         return -1;  /* Not a whois command */
@@ -4046,7 +4080,7 @@ static int handle_client_whois(json_t *root)
     if (device_min < 0) device_min = 0;
     if (device_max < 0) device_max = 4194303;
     if (device_min > device_max) {
-        int32_t tmp = device_min;
+        tmp = device_min;
         device_min = device_max;
         device_max = tmp;
     }
@@ -4070,6 +4104,11 @@ static int handle_client_devicelist(json_t *root)
     json_t *response, *devices;
     char *json_str;
     size_t i;
+    json_t *dev;
+    char mac_str[64];
+    char tmp[8];
+    char ip_str[32];
+    int j;
     
     if (!cmd_obj || strcmp(json_string_value(cmd_obj), "devicelist") != 0) {
         return -1;
@@ -4081,16 +4120,14 @@ static int handle_client_devicelist(json_t *root)
     devices = json_array();
     pthread_mutex_lock(&device_list_mutex);
     for (i = 0; i < device_count; i++) {
-        json_t *dev = json_object();
+        dev = json_object();
         json_object_set_new(dev, "deviceId", json_integer(device_list[i].device_id));
         json_object_set_new(dev, "maxApdu", json_integer(device_list[i].max_apdu));
         json_object_set_new(dev, "vendorId", json_integer(device_list[i].vendor_id));
         
         /* Format MAC address */
-        char mac_str[64] = "";
-        int j;
+        mac_str[0] = '\0';
         for (j = 0; j < device_list[i].address.mac_len && j < MAX_MAC_LEN; j++) {
-            char tmp[8];
             snprintf(tmp, sizeof(tmp), "%s%02X", j > 0 ? ":" : "", 
                     device_list[i].address.mac[j]);
             strcat(mac_str, tmp);
@@ -4099,7 +4136,6 @@ static int handle_client_devicelist(json_t *root)
         
         /* Extract IP if it's BACnet/IP */
         if (device_list[i].address.mac_len == 6) {
-            char ip_str[32];
             snprintf(ip_str, sizeof(ip_str), "%u.%u.%u.%u",
                     device_list[i].address.mac[0],
                     device_list[i].address.mac[1],
@@ -4126,8 +4162,9 @@ static int handle_client_devicelist(json_t *root)
 
 static int handle_client_objectlist(json_t *root)
 {
-    json_t *cmd_obj = json_object_get(root, "cmd");
-    json_t *device_obj, *ip_obj;
+    json_t *cmd_obj;
+    json_t *device_obj;
+    json_t *ip_obj;
     uint32_t target_device_id;
     BACNET_ADDRESS target_addr;
     DISCOVERED_DEVICE *dev;
@@ -4135,7 +4172,10 @@ static int handle_client_objectlist(json_t *root)
     char *response;
     int timeout;
     size_t i;
-    PENDING_REQUEST *req = NULL;
+    PENDING_REQUEST *req;
+    
+    cmd_obj = json_object_get(root, "cmd");
+    req = NULL;
     
     if (!cmd_obj || strcmp(json_string_value(cmd_obj), "objectlist") != 0) {
         return -1;
