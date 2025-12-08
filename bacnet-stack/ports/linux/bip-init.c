@@ -843,14 +843,14 @@ static int createSocket(const struct sockaddr_in *sin)
         return status;
     }
 /* Allow multiple processes to bind to the same port */
-
+/* 
 status = setsockopt(
     sock_fd, SOL_SOCKET, SO_REUSEPORT, &sockopt, sizeof(sockopt));
 if (status < 0) {
     if (BIP_Debug) {
         perror("SO_REUSEPORT: ");
     }
-}
+}*/
 
     /* allow us to send a broadcast */
     status = setsockopt(
