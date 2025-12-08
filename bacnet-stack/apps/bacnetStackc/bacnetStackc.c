@@ -57,7 +57,9 @@
 #include "bacnet/dcc.h"
 #include "bacnet/datalink/datalink.h"
 #include "bacnet/datalink/bip.h"
+#include "bacnet/datalink/dlenv.h"
 #include "bacnet/basic/binding/address.h"
+#include "bacnet/basic/object/device.h"
 #include "bacnet/basic/services.h"
 #include "bacnet/basic/tsm/tsm.h"
 #include "bacnet/basic/service/s_iam.h"
@@ -73,8 +75,9 @@
 
 /* Configuration */
 #define DEFAULT_SOCKET_PORT 1235
+#define DEFAULT_DEVICE_ID 260002  /* Device ID du client (serveur = 260001) */
 #define MAX_BUFFER_SIZE 65536
-#define BACNET_PORT 0xBAC0
+#define BACNET_PORT 0xBAC0  /* Port BACnet/IP standard (47808) - partagé avec serveur mais client ne répond pas aux requêtes */
 #define DEFAULT_BACNET_INTERFACE NULL
 #define BACNET_BBMD_ADDRESS NULL
 #define BACNET_BBMD_PORT 0xBAC0
@@ -82,6 +85,7 @@
 
 /* Runtime configuration */
 static int socket_port = DEFAULT_SOCKET_PORT;
+static uint32_t device_id = DEFAULT_DEVICE_ID;
 static char pid_file_path[256] = {0};
 
 /* Client state */
@@ -1702,15 +1706,25 @@ int main(int argc, char *argv[])
     char buffer[MAX_BUFFER_SIZE];
     ssize_t bytes_read;
     int i;
+    int argi = 1;
     FILE *pid_fp;
     
-    /* Parse command line arguments */
-    for (i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--socketport") == 0 && i + 1 < argc) {
-            socket_port = atoi(argv[++i]);
-        } else if (strcmp(argv[i], "--pid") == 0 && i + 1 < argc) {
-            strncpy(pid_file_path, argv[++i], sizeof(pid_file_path) - 1);
+    /* Parse positional arguments (like server) */
+    if (argi < argc && argv[argi][0] != '-') {
+        device_id = strtoul(argv[argi], NULL, 0);
+        argi++;
+    }
+    
+    /* Parse named arguments */
+    while (argi < argc) {
+        if (strcmp(argv[argi], "--socketport") == 0 && (argi + 1) < argc) {
+            socket_port = atoi(argv[++argi]);
+        } else if (strcmp(argv[argi], "--deviceid") == 0 && (argi + 1) < argc) {
+            device_id = strtoul(argv[++argi], NULL, 0);
+        } else if (strcmp(argv[argi], "--pid") == 0 && (argi + 1) < argc) {
+            strncpy(pid_file_path, argv[++argi], sizeof(pid_file_path) - 1);
         }
+        argi++;
     }
     
     printf("BACnet Stack Client v1.0\n");
@@ -1745,7 +1759,7 @@ int main(int argc, char *argv[])
     const char *bacnet_iface_const = getenv("BACNET_IFACE");
     const char *bacnet_port_str = getenv("BACNET_IP_PORT");
     char *bacnet_iface = NULL;
-    uint16_t bacnet_port = 0xBAC0;  /* Default BACnet/IP port 47808 */
+    uint16_t bacnet_port = 0xBAC0;  /* Default BACnet/IP port 47808 (standard) - OK car client ne répond pas aux requêtes serveur */
     
     /* Copy to non-const for datalink_init which expects char* */
     if (bacnet_iface_const) {
@@ -1762,6 +1776,14 @@ int main(int argc, char *argv[])
             fflush(stdout);
         }
     }
+    
+    /* Set Device ID */
+    Device_Set_Object_Instance_Number(device_id);
+    printf("[CLIENT] Device ID: %u\n", device_id);
+    fflush(stdout);
+    
+    /* Initialize datalink environment */
+    dlenv_init();
     
     /* Set BACnet/IP port BEFORE datalink_init (critical!) */
     printf("[CLIENT] Configuring BACnet/IP port: %u (0x%04X)\n", bacnet_port, bacnet_port);
