@@ -3868,14 +3868,13 @@ static void client_read_property_ack_handler(
 {
     BACNET_READ_PROPERTY_DATA data;
     BACNET_APPLICATION_DATA_VALUE value;
-    int len;
+    int len, i;
     json_t *response;
     json_t *result;
     json_t *values_array;
     uint8_t *app_data;
     uint32_t app_data_len;
     char value_str[256];
-    BACNET_OBJECT_PROPERTY_VALUE obj_value;
     char *json_str;
     
     (void)src;
@@ -3901,40 +3900,76 @@ static void client_read_property_ack_handler(
         json_object_set_new(result, "property",
                           json_string(bactext_property_name(data.object_property)));
         
-        /* Decode values */
-        if (data.array_index == 0) {
-            /* Array count */
-            len = bacapp_decode_application_data(data.application_data,
-                                                data.application_data_len, &value);
-            if (len > 0 && value.tag == BACNET_APPLICATION_TAG_UNSIGNED_INT) {
-                json_object_set_new(result, "arraySize", json_integer(value.type.Unsigned_Int));
-            }
-        } else {
-            /* Array values or single value */
-            values_array = json_array();
-            app_data = data.application_data;
-            app_data_len = data.application_data_len;
+        /* Decode array values using proper array decoding */
+        values_array = json_array();
+        app_data = data.application_data;
+        app_data_len = data.application_data_len;
+        
+        i = 0;
+        while (app_data_len > 0 && i < 512) {
+            /* Use bacapp_decode_known_array_property for proper array handling */
+            len = bacapp_decode_known_array_property(
+                app_data,
+                app_data_len,
+                &value,
+                data.object_type,
+                data.object_property);
             
-            while (app_data_len > 0) {
+            if (len <= 0) {
+                /* Try fallback to regular decode */
                 len = bacapp_decode_application_data(app_data, app_data_len, &value);
                 if (len <= 0) break;
-                
-                obj_value.object_type = data.object_type;
-                obj_value.object_instance = data.object_instance;
-                obj_value.object_property = data.object_property;
-                obj_value.array_index = BACNET_ARRAY_ALL;
-                obj_value.value = &value;
-                
-                bacapp_snprintf_value(value_str, sizeof(value_str), &obj_value);
-                json_array_append_new(values_array, json_string(value_str));
-                
-                app_data += len;
-                app_data_len -= len;
             }
             
-            json_object_set_new(result, "values", values_array);
+            /* Format based on tag type */
+            switch (value.tag) {
+                case BACNET_APPLICATION_TAG_OBJECT_ID:
+                    snprintf(value_str, sizeof(value_str), "%s:%u",
+                            bactext_object_type_name(value.type.Object_Id.type),
+                            (unsigned int)value.type.Object_Id.instance);
+                    break;
+                case BACNET_APPLICATION_TAG_UNSIGNED_INT:
+                    snprintf(value_str, sizeof(value_str), "%u",
+                            (unsigned int)value.type.Unsigned_Int);
+                    break;
+                case BACNET_APPLICATION_TAG_SIGNED_INT:
+                    snprintf(value_str, sizeof(value_str), "%d",
+                            value.type.Signed_Int);
+                    break;
+                case BACNET_APPLICATION_TAG_REAL:
+                    snprintf(value_str, sizeof(value_str), "%.2f",
+                            value.type.Real);
+                    break;
+                case BACNET_APPLICATION_TAG_DOUBLE:
+                    snprintf(value_str, sizeof(value_str), "%.2f",
+                            value.type.Double);
+                    break;
+                case BACNET_APPLICATION_TAG_BOOLEAN:
+                    snprintf(value_str, sizeof(value_str), "%s",
+                            value.type.Boolean ? "true" : "false");
+                    break;
+                case BACNET_APPLICATION_TAG_ENUMERATED:
+                    snprintf(value_str, sizeof(value_str), "%u",
+                            (unsigned int)value.type.Enumerated);
+                    break;
+                case BACNET_APPLICATION_TAG_CHARACTER_STRING:
+                    characterstring_ansi_copy(value_str, sizeof(value_str),
+                                            &value.type.Character_String);
+                    break;
+                default:
+                    snprintf(value_str, sizeof(value_str), "(tag %d)",
+                            value.tag);
+                    break;
+            }
+            
+            json_array_append_new(values_array, json_string(value_str));
+            
+            app_data += len;
+            app_data_len -= len;
+            i++;
         }
         
+        json_object_set_new(result, "values", values_array);
         json_object_set_new(response, "result", result);
         
         json_str = json_dumps(response, JSON_COMPACT);
