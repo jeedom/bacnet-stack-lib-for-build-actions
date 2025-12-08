@@ -4211,8 +4211,10 @@ static int handle_client_devicelist(json_t *root)
 }
 
 /*
- * handle_client_objectlist() 
+ * handle_client_objectlist() - VERSION CORRIGÉE
  * 
+ * FIX: Pré-allocation du slot AVANT Send_Read_Property_Request_Address()
+ * pour éviter le race condition sur localhost
  */
 
 static int handle_client_objectlist(json_t *root)
@@ -4273,24 +4275,38 @@ static int handle_client_objectlist(json_t *root)
     }
     
     /* ═══════════════════════════════════════════════════════════════
-     * CRITICAL FIX: PRÉ-ALLOCATION DU SLOT AVANT ENVOI
+     * CRITICAL FIX: Obtenir invoke_id AVANT Send (approche client)
      * ═══════════════════════════════════════════════════════════════ */
     
-    printf("[CLIENT] PRE-ALLOCATING request slot BEFORE sending...\n");
+    printf("[CLIENT] Getting invoke_id from TSM BEFORE sending...\n");
     fflush(stdout);
     
-    /* Trouver un slot libre et le réserver avec un marqueur temporaire */
+    /* Obtenir invoke_id NOUS-MÊMES avant Send */
+    invoke_id = tsm_next_free_invokeID();
+    if (invoke_id == 0) {
+        printf("[CLIENT] ✗ No free invoke_id available from TSM\n");
+        fflush(stdout);
+        response = client_create_error_response("No free invoke ID available");
+        write(g_client_fd, response, strlen(response));
+        write(g_client_fd, "\n", 1);
+        free(response);
+        return 0;
+    }
+    
+    printf("[CLIENT] ✓ Allocated invoke_id=%u from TSM\n", invoke_id);
+    fflush(stdout);
+    
+    /* Trouver un slot libre et le réserver IMMÉDIATEMENT */
     pthread_mutex_lock(&pending_mutex);
     for (i = 0; i < MAX_PENDING_REQUESTS; i++) {
         if (pending_requests[i].invoke_id == 0) {
-            /* Réserver avec marqueur temporaire (255 = en cours) */
-            pending_requests[i].invoke_id = 255;  /* Temporary marker */
+            pending_requests[i].invoke_id = invoke_id;  /* Real invoke_id! */
             pending_requests[i].completed = false;
             pending_requests[i].error = false;
             pending_requests[i].response_json = NULL;
             pending_requests[i].timestamp = time(NULL);
             req = &pending_requests[i];
-            printf("[CLIENT] ✓ Slot %zu reserved (invoke_id=255 temporarily)\n", i);
+            printf("[CLIENT] ✓ Slot %zu allocated for invoke_id=%u\n", i, invoke_id);
             fflush(stdout);
             break;
         }
@@ -4308,13 +4324,13 @@ static int handle_client_objectlist(json_t *root)
     }
     
     /* ═══════════════════════════════════════════════════════════════
-     * MAINTENANT on peut envoyer la requête (slot déjà réservé)
+     * MAINTENANT envoyer (slot DÉJÀ créé avec le bon invoke_id)
      * ═══════════════════════════════════════════════════════════════ */
     
     printf("[CLIENT] Sending ReadProperty for OBJECT_LIST to device %u\n", target_device_id);
     fflush(stdout);
     
-    invoke_id = Send_Read_Property_Request_Address(
+    uint8_t sent_invoke_id = Send_Read_Property_Request_Address(
             &target_addr,
             1476,  /* max APDU */
             OBJECT_DEVICE,
@@ -4322,8 +4338,12 @@ static int handle_client_objectlist(json_t *root)
             PROP_OBJECT_LIST,
             BACNET_ARRAY_ALL);
     
-    if (invoke_id == 0) {
-        /* Failed - clean up reserved slot */
+    printf("[CLIENT] DEBUG: Send returned invoke_id=%u (expected %u)\n", 
+           sent_invoke_id, invoke_id);
+    fflush(stdout);
+    
+    if (sent_invoke_id == 0) {
+        /* Failed - clean up allocated slot */
         printf("[CLIENT] ✗ Send_Read_Property_Request_Address failed\n");
         fflush(stdout);
         
@@ -4339,55 +4359,119 @@ static int handle_client_objectlist(json_t *root)
     }
     
     /* ═══════════════════════════════════════════════════════════════
-     * Mettre à jour le slot avec le VRAI invoke_id (opération atomique)
+     * Vérifier si invoke_id a changé (gérer le cas improbable)
      * ═══════════════════════════════════════════════════════════════ */
     
-    pthread_mutex_lock(&pending_mutex);
-    req->invoke_id = invoke_id;
-    pthread_mutex_unlock(&pending_mutex);
+    if (sent_invoke_id != invoke_id) {
+        printf("[CLIENT] ⚠️  WARNING: invoke_id mismatch! allocated=%u, sent=%u\n", 
+               invoke_id, sent_invoke_id);
+        printf("[CLIENT] Re-allocating slot for actual invoke_id=%u\n", sent_invoke_id);
+        fflush(stdout);
+        
+        /* Nettoyer l'ancien slot */
+        pthread_mutex_lock(&pending_mutex);
+        memset(req, 0, sizeof(PENDING_REQUEST));
+        
+        /* Créer nouveau slot avec le vrai invoke_id */
+        for (i = 0; i < MAX_PENDING_REQUESTS; i++) {
+            if (pending_requests[i].invoke_id == 0) {
+                pending_requests[i].invoke_id = sent_invoke_id;
+                pending_requests[i].completed = false;
+                pending_requests[i].error = false;
+                pending_requests[i].response_json = NULL;
+                pending_requests[i].timestamp = time(NULL);
+                req = &pending_requests[i];
+                break;
+            }
+        }
+        pthread_mutex_unlock(&pending_mutex);
+        
+        if (!req) {
+            response = client_create_error_response("Failed to reallocate slot");
+            write(g_client_fd, response, strlen(response));
+            write(g_client_fd, "\n", 1);
+            free(response);
+            return 0;
+        }
+        
+        invoke_id = sent_invoke_id;  /* Use actual invoke_id */
+    }
     
-    printf("[CLIENT] ✓ ReadProperty request sent successfully (invoke_id=%u)\n", invoke_id);
-    printf("[CLIENT] ✓ Slot updated with real invoke_id=%u\n", invoke_id);
+    printf("[CLIENT] ✓ ReadProperty sent successfully (invoke_id=%u)\n", invoke_id);
     fflush(stdout);
     
     /* ═══════════════════════════════════════════════════════════════
-     * Attendre la réponse
+     * Attendre la réponse (TIMEOUT AUGMENTÉ À 60 SECONDES)
      * ═══════════════════════════════════════════════════════════════ */
     
-    for (timeout = 0; timeout < 300; timeout++) {  /* 30 seconds */
+    printf("[CLIENT] Waiting for response (timeout=60s, polling every 100ms)...\n");
+    fflush(stdout);
+    
+    for (timeout = 0; timeout < 600; timeout++) {  /* 60 seconds (600 x 100ms) */
         usleep(100000);  /* 100ms */
         
         pthread_mutex_lock(&pending_mutex);
+        
+        /* Vérifier si la requête est toujours valide */
+        if (req->invoke_id != invoke_id) {
+            printf("[CLIENT] ⚠️  WARNING: invoke_id changed from %u to %u!\n", 
+                   invoke_id, req->invoke_id);
+            fflush(stdout);
+        }
+        
         if (req->completed) {
+            printf("[CLIENT] ✓ Response completed flag detected at %.1fs\n", timeout * 0.1);
+            fflush(stdout);
+            
             if (req->response_json) {
-                printf("[CLIENT] ✓ Response received after %.1fs\n", timeout * 0.1);
+                printf("[CLIENT] ✓ Response received after %.1fs (%zu bytes)\n", 
+                       timeout * 0.1, strlen(req->response_json));
                 fflush(stdout);
                 write(g_client_fd, req->response_json, strlen(req->response_json));
                 write(g_client_fd, "\n", 1);
                 free(req->response_json);
+            } else {
+                printf("[CLIENT] ⚠️  WARNING: completed=true but response_json=NULL\n");
+                fflush(stdout);
             }
+            
             memset(req, 0, sizeof(PENDING_REQUEST));
             pthread_mutex_unlock(&pending_mutex);
             return 0;
         }
+        
         pthread_mutex_unlock(&pending_mutex);
         
         /* Log every 5 seconds */
         if (timeout > 0 && timeout % 50 == 0) {
-            printf("[CLIENT] Still waiting for response... (%.1fs)\n", timeout * 0.1);
+            printf("[CLIENT] Still waiting for response... (%.1fs / 60s)\n", timeout * 0.1);
             fflush(stdout);
         }
     }
     
-    /* Timeout */
+    /* Timeout après 60 secondes */
+    printf("[CLIENT] ✗ Timeout after 60 seconds\n");
+    fflush(stdout);
+    
     pthread_mutex_lock(&pending_mutex);
+    
+    /* Vérifier si une réponse est arrivée juste avant le timeout */
+    if (req->completed && req->response_json) {
+        printf("[CLIENT] ⚠️  Response arrived JUST before timeout cleanup\n");
+        fflush(stdout);
+        write(g_client_fd, req->response_json, strlen(req->response_json));
+        write(g_client_fd, "\n", 1);
+        free(req->response_json);
+        memset(req, 0, sizeof(PENDING_REQUEST));
+        pthread_mutex_unlock(&pending_mutex);
+        return 0;
+    }
+    
+    /* Vraiment timeout - nettoyer */
     memset(req, 0, sizeof(PENDING_REQUEST));
     pthread_mutex_unlock(&pending_mutex);
     
-    printf("[CLIENT] ✗ Timeout waiting for response (30s)\n");
-    fflush(stdout);
-    
-    response = client_create_error_response("Timeout waiting for response (30s)");
+    response = client_create_error_response("Timeout waiting for response (60s)");
     write(g_client_fd, response, strlen(response));
     write(g_client_fd, "\n", 1);
     free(response);
