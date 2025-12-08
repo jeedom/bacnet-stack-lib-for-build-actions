@@ -57,7 +57,6 @@
 #include "bacnet/dcc.h"
 #include "bacnet/datalink/datalink.h"
 #include "bacnet/datalink/bip.h"
-#include "bacnet/datalink/dlenv.h"
 #include "bacnet/basic/binding/address.h"
 #include "bacnet/basic/object/device.h"
 #include "bacnet/basic/services.h"
@@ -1781,9 +1780,6 @@ int main(int argc, char *argv[])
     Device_Set_Object_Instance_Number(device_id);
     printf("[CLIENT] Device ID: %u\n", device_id);
     fflush(stdout);
-    
-    /* Initialize datalink environment */
-    dlenv_init();
     
     /* Set BACnet/IP port BEFORE datalink_init (critical!) */
     printf("[CLIENT] Configuring BACnet/IP port: %u (0x%04X)\n", bacnet_port, bacnet_port);
