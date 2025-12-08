@@ -3913,7 +3913,8 @@ static void client_read_property_ack_handler(
                 app_data_len,
                 &value,
                 data.object_type,
-                data.object_property);
+                data.object_property,
+                data.array_index);
             
             if (len <= 0) {
                 /* Try fallback to regular decode */
