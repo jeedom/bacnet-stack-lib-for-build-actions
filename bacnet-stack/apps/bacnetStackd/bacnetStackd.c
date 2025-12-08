@@ -4210,6 +4210,11 @@ static int handle_client_devicelist(json_t *root)
     return 0;
 }
 
+/*
+ * handle_client_objectlist() 
+ * 
+ */
+
 static int handle_client_objectlist(json_t *root)
 {
     json_t *cmd_obj;
@@ -4228,7 +4233,7 @@ static int handle_client_objectlist(json_t *root)
     req = NULL;
     
     if (!cmd_obj || strcmp(json_string_value(cmd_obj), "objectlist") != 0) {
-        return -1;
+        return -1;  /* Not an objectlist command */
     }
     
     device_obj = json_object_get(root, "device");
@@ -4267,46 +4272,34 @@ static int handle_client_objectlist(json_t *root)
         memcpy(&target_addr, &dev->address, sizeof(BACNET_ADDRESS));
     }
     
-    /* Send ReadProperty for object-list - this will allocate an invoke_id */
-    printf("[CLIENT] Sending ReadProperty for OBJECT_LIST to device %u\n", target_device_id);
+    /* ═══════════════════════════════════════════════════════════════
+     * CRITICAL FIX: PRÉ-ALLOCATION DU SLOT AVANT ENVOI
+     * ═══════════════════════════════════════════════════════════════ */
+    
+    printf("[CLIENT] PRE-ALLOCATING request slot BEFORE sending...\n");
     fflush(stdout);
     
-    invoke_id = Send_Read_Property_Request_Address(
-            &target_addr,
-            1476,  /* max APDU */
-            OBJECT_DEVICE,
-            target_device_id,
-            PROP_OBJECT_LIST,
-            BACNET_ARRAY_ALL);
-    
-    if (invoke_id == 0) {
-        response = client_create_error_response("Failed to send request");
-        write(g_client_fd, response, strlen(response));
-        write(g_client_fd, "\n", 1);
-        free(response);
-        return 0;
-    }
-    
-    printf("[CLIENT] ReadProperty request sent successfully (invoke_id=%u)\n", invoke_id);
-    fflush(stdout);
-    
-    /* Track the request */
- pthread_mutex_lock(&pending_mutex);
+    /* Trouver un slot libre et le réserver avec un marqueur temporaire */
+    pthread_mutex_lock(&pending_mutex);
     for (i = 0; i < MAX_PENDING_REQUESTS; i++) {
         if (pending_requests[i].invoke_id == 0) {
-            /* Reserve with temporary marker (255 = in progress) */
-            pending_requests[i].invoke_id = 255;
+            /* Réserver avec marqueur temporaire (255 = en cours) */
+            pending_requests[i].invoke_id = 255;  /* Temporary marker */
             pending_requests[i].completed = false;
             pending_requests[i].error = false;
             pending_requests[i].response_json = NULL;
             pending_requests[i].timestamp = time(NULL);
             req = &pending_requests[i];
+            printf("[CLIENT] ✓ Slot %zu reserved (invoke_id=255 temporarily)\n", i);
+            fflush(stdout);
             break;
         }
     }
     pthread_mutex_unlock(&pending_mutex);
     
     if (!req) {
+        printf("[CLIENT] ✗ No free request slot available\n");
+        fflush(stdout);
         response = client_create_error_response("No free request slot");
         write(g_client_fd, response, strlen(response));
         write(g_client_fd, "\n", 1);
@@ -4314,13 +4307,16 @@ static int handle_client_objectlist(json_t *root)
         return 0;
     }
     
-    /* NOW send the request (slot is already reserved) */
+    /* ═══════════════════════════════════════════════════════════════
+     * MAINTENANT on peut envoyer la requête (slot déjà réservé)
+     * ═══════════════════════════════════════════════════════════════ */
+    
     printf("[CLIENT] Sending ReadProperty for OBJECT_LIST to device %u\n", target_device_id);
     fflush(stdout);
     
     invoke_id = Send_Read_Property_Request_Address(
             &target_addr,
-            1476,
+            1476,  /* max APDU */
             OBJECT_DEVICE,
             target_device_id,
             PROP_OBJECT_LIST,
@@ -4328,6 +4324,9 @@ static int handle_client_objectlist(json_t *root)
     
     if (invoke_id == 0) {
         /* Failed - clean up reserved slot */
+        printf("[CLIENT] ✗ Send_Read_Property_Request_Address failed\n");
+        fflush(stdout);
+        
         pthread_mutex_lock(&pending_mutex);
         memset(req, 0, sizeof(PENDING_REQUEST));
         pthread_mutex_unlock(&pending_mutex);
@@ -4339,50 +4338,29 @@ static int handle_client_objectlist(json_t *root)
         return 0;
     }
     
-    /* Update slot with real invoke_id (atomic operation) */
+    /* ═══════════════════════════════════════════════════════════════
+     * Mettre à jour le slot avec le VRAI invoke_id (opération atomique)
+     * ═══════════════════════════════════════════════════════════════ */
+    
     pthread_mutex_lock(&pending_mutex);
     req->invoke_id = invoke_id;
     pthread_mutex_unlock(&pending_mutex);
     
-    printf("[CLIENT] ReadProperty request sent successfully (invoke_id=%u)\n", invoke_id);
-    fflush(stdout);
-
-    
-    /* Send ReadProperty for object-list */
-    printf("[CLIENT] Sending ReadProperty for OBJECT_LIST to device %u (invoke_id=%u)\n", 
-           target_device_id, invoke_id);
+    printf("[CLIENT] ✓ ReadProperty request sent successfully (invoke_id=%u)\n", invoke_id);
+    printf("[CLIENT] ✓ Slot updated with real invoke_id=%u\n", invoke_id);
     fflush(stdout);
     
-    if (!Send_Read_Property_Request_Address(
-            &target_addr,
-            1476,  /* max APDU */
-            OBJECT_DEVICE,
-            target_device_id,
-            PROP_OBJECT_LIST,
-            BACNET_ARRAY_ALL)) {
-        
-        pthread_mutex_lock(&pending_mutex);
-        memset(req, 0, sizeof(PENDING_REQUEST));
-        pthread_mutex_unlock(&pending_mutex);
-        
-        response = client_create_error_response("Failed to send request");
-        write(g_client_fd, response, strlen(response));
-        write(g_client_fd, "\n", 1);
-        free(response);
-        return 0;
-    }
+    /* ═══════════════════════════════════════════════════════════════
+     * Attendre la réponse
+     * ═══════════════════════════════════════════════════════════════ */
     
-    printf("[CLIENT] ReadProperty request sent successfully\n");
-    fflush(stdout);
-    
-    /* Wait for response */
     for (timeout = 0; timeout < 300; timeout++) {  /* 30 seconds */
         usleep(100000);  /* 100ms */
         
         pthread_mutex_lock(&pending_mutex);
         if (req->completed) {
             if (req->response_json) {
-                printf("[CLIENT] Response received after %.1fs\n", timeout * 0.1);
+                printf("[CLIENT] ✓ Response received after %.1fs\n", timeout * 0.1);
                 fflush(stdout);
                 write(g_client_fd, req->response_json, strlen(req->response_json));
                 write(g_client_fd, "\n", 1);
@@ -4405,6 +4383,9 @@ static int handle_client_objectlist(json_t *root)
     pthread_mutex_lock(&pending_mutex);
     memset(req, 0, sizeof(PENDING_REQUEST));
     pthread_mutex_unlock(&pending_mutex);
+    
+    printf("[CLIENT] ✗ Timeout waiting for response (30s)\n");
+    fflush(stdout);
     
     response = client_create_error_response("Timeout waiting for response (30s)");
     write(g_client_fd, response, strlen(response));
