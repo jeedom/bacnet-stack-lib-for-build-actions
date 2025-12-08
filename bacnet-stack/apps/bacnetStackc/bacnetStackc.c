@@ -58,7 +58,6 @@
 #include "bacnet/datalink/datalink.h"
 #include "bacnet/datalink/bip.h"
 #include "bacnet/basic/binding/address.h"
-#include "bacnet/basic/object/device.h"
 #include "bacnet/basic/services.h"
 #include "bacnet/basic/tsm/tsm.h"
 #include "bacnet/basic/service/s_iam.h"
@@ -1776,9 +1775,8 @@ int main(int argc, char *argv[])
         }
     }
     
-    /* Set Device ID */
-    Device_Set_Object_Instance_Number(device_id);
-    printf("[CLIENT] Device ID: %u\n", device_id);
+    /* Note: Client Device ID is %u but not exposed as full BACnet Device object */
+    printf("[CLIENT] Device ID: %u (client-only, no device object)\n", device_id);
     fflush(stdout);
     
     /* Set BACnet/IP port BEFORE datalink_init (critical!) */
