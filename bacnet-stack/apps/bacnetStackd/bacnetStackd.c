@@ -3815,9 +3815,14 @@ static void complete_request(uint8_t invoke_id, const char *json_response, bool 
 {
     size_t i;
     
+    printf("[CLIENT] complete_request called for invoke_id=%u, is_error=%d\n", invoke_id, is_error);
+    fflush(stdout);
+    
     pthread_mutex_lock(&pending_mutex);
     for (i = 0; i < MAX_PENDING_REQUESTS; i++) {
         if (pending_requests[i].invoke_id == invoke_id) {
+            printf("[CLIENT] Found matching pending request at index %zu\n", i);
+            fflush(stdout);
             pending_requests[i].completed = true;
             pending_requests[i].error = is_error;
             if (pending_requests[i].response_json) {
@@ -3828,6 +3833,8 @@ static void complete_request(uint8_t invoke_id, const char *json_response, bool 
             return;
         }
     }
+    printf("[CLIENT] WARNING: No matching pending request found for invoke_id=%u\n", invoke_id);
+    fflush(stdout);
     pthread_mutex_unlock(&pending_mutex);
 }
 
@@ -3874,8 +3881,15 @@ static void client_read_property_ack_handler(
     (void)src;
     len = 0;
     
+    printf("[CLIENT] ReadProperty-ACK received (invoke_id=%u)\n", service_data->invoke_id);
+    fflush(stdout);
+    
     len = rp_ack_decode_service_request(service_request, service_len, &data);
     if (len > 0) {
+        printf("[CLIENT] Decoded: obj=%u:%u, prop=%u\n", 
+               data.object_type, data.object_instance, data.object_property);
+        fflush(stdout);
+        
         response = json_object();
         json_object_set_new(response, "status", json_string("success"));
         json_object_set_new(response, "service", json_string("ReadProperty"));
@@ -4251,6 +4265,10 @@ static int handle_client_objectlist(json_t *root)
     }
     
     /* Send ReadProperty for object-list */
+    printf("[CLIENT] Sending ReadProperty for OBJECT_LIST to device %u (invoke_id=%u)\n", 
+           target_device_id, invoke_id);
+    fflush(stdout);
+    
     if (!Send_Read_Property_Request_Address(
             &target_addr,
             1476,  /* max APDU */
@@ -4270,13 +4288,18 @@ static int handle_client_objectlist(json_t *root)
         return 0;
     }
     
+    printf("[CLIENT] ReadProperty request sent successfully\n");
+    fflush(stdout);
+    
     /* Wait for response */
-    for (timeout = 0; timeout < 100; timeout++) {  /* 10 seconds */
+    for (timeout = 0; timeout < 300; timeout++) {  /* 30 seconds */
         usleep(100000);  /* 100ms */
         
         pthread_mutex_lock(&pending_mutex);
         if (req->completed) {
             if (req->response_json) {
+                printf("[CLIENT] Response received after %.1fs\n", timeout * 0.1);
+                fflush(stdout);
                 write(g_client_fd, req->response_json, strlen(req->response_json));
                 write(g_client_fd, "\n", 1);
                 free(req->response_json);
@@ -4286,6 +4309,12 @@ static int handle_client_objectlist(json_t *root)
             return 0;
         }
         pthread_mutex_unlock(&pending_mutex);
+        
+        /* Log every 5 seconds */
+        if (timeout > 0 && timeout % 50 == 0) {
+            printf("[CLIENT] Still waiting for response... (%.1fs)\n", timeout * 0.1);
+            fflush(stdout);
+        }
     }
     
     /* Timeout */
@@ -4293,7 +4322,7 @@ static int handle_client_objectlist(json_t *root)
     memset(req, 0, sizeof(PENDING_REQUEST));
     pthread_mutex_unlock(&pending_mutex);
     
-    response = client_create_error_response("Timeout waiting for response");
+    response = client_create_error_response("Timeout waiting for response (30s)");
     write(g_client_fd, response, strlen(response));
     write(g_client_fd, "\n", 1);
     free(response);
