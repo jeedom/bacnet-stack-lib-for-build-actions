@@ -3811,18 +3811,33 @@ static void cleanup_old_requests(void)
 {
     time_t now = time(NULL);
     size_t i;
+    int cleaned = 0;
     
     pthread_mutex_lock(&pending_mutex);
+    
     for (i = 0; i < MAX_PENDING_REQUESTS; i++) {
-        if (pending_requests[i].invoke_id != 0 &&
-            (now - pending_requests[i].timestamp) > 30) {
-            if (pending_requests[i].response_json) {
-                free(pending_requests[i].response_json);
+        if (pending_requests[i].invoke_id != 0) {
+            /* Nettoyer les requêtes de plus de 10 secondes (au lieu de 60) */
+            if (now - pending_requests[i].timestamp > 10) {
+                printf("[CLIENT] Cleaning up expired request slot %zu (invoke_id=%u, age=%ld s)\n",
+                       i, pending_requests[i].invoke_id, (long)(now - pending_requests[i].timestamp));
+                fflush(stdout);
+                
+                if (pending_requests[i].response_json) {
+                    free(pending_requests[i].response_json);
+                }
+                memset(&pending_requests[i], 0, sizeof(PENDING_REQUEST));
+                cleaned++;
             }
-            memset(&pending_requests[i], 0, sizeof(PENDING_REQUEST));
         }
     }
+    
     pthread_mutex_unlock(&pending_mutex);
+    
+    if (cleaned > 0) {
+        printf("[CLIENT] ✓ Cleaned %d expired request(s)\n", cleaned);
+        fflush(stdout);
+    }
 }
 
 static void complete_request(uint8_t invoke_id, const char *json_response, bool is_error)
@@ -4223,40 +4238,6 @@ static int handle_client_devicelist(json_t *root)
     
     return 0;
 }
-
-static void cleanup_old_requests(void)
-{
-    time_t now = time(NULL);
-    size_t i;
-    int cleaned = 0;
-    
-    pthread_mutex_lock(&pending_mutex);
-    
-    for (i = 0; i < MAX_PENDING_REQUESTS; i++) {
-        if (pending_requests[i].invoke_id != 0) {
-            /* Nettoyer les requêtes de plus de 10 secondes (au lieu de 60) */
-            if (now - pending_requests[i].timestamp > 10) {
-                printf("[CLIENT] Cleaning up expired request slot %zu (invoke_id=%u, age=%ld s)\n",
-                       i, pending_requests[i].invoke_id, (long)(now - pending_requests[i].timestamp));
-                fflush(stdout);
-                
-                if (pending_requests[i].response_json) {
-                    free(pending_requests[i].response_json);
-                }
-                memset(&pending_requests[i], 0, sizeof(PENDING_REQUEST));
-                cleaned++;
-            }
-        }
-    }
-    
-    pthread_mutex_unlock(&pending_mutex);
-    
-    if (cleaned > 0) {
-        printf("[CLIENT] ✓ Cleaned %d expired request(s)\n", cleaned);
-        fflush(stdout);
-    }
-}
-
 
 
 static int handle_client_objectlist(json_t *root)
@@ -5130,7 +5111,7 @@ static int handle_client_writeprop(json_t *root)
     BACNET_NPDU_DATA npdu_data;
     
     cleanup_old_requests();
-    
+
     cmd_obj = json_object_get(root, "cmd");
     req = NULL;
     priority = BACNET_NO_PRIORITY;
