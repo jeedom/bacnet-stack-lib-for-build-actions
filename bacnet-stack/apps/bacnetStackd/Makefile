@@ -9,6 +9,7 @@ TARGET_BIN = $(TARGET)
 
 # Source files - Compile only minimal objects needed
 BACNET_OBJECT_DIR = $(BACNET_SRC_DIR)/bacnet/basic/object
+BACNET_CORE_DIR = $(BACNET_SRC_DIR)/bacnet
 
 SRC = bacnetStackd.c \
       trendlog_override.c \
@@ -47,6 +48,13 @@ SRC = bacnetStackd.c \
       $(BACNET_OBJECT_DIR)/acc.c \
       $(BACNET_OBJECT_DIR)/bacfile.c
 
+# === AJOUT : Fonctions core nécessaires pour rr_trend_log_encode ===
+# Ces fichiers contiennent encode_context_datetime et autres fonctions d'encodage
+SRC += $(BACNET_CORE_DIR)/bacdcode.c \
+       $(BACNET_CORE_DIR)/bacapp.c \
+       $(BACNET_CORE_DIR)/datetime.c \
+       $(BACNET_CORE_DIR)/readrange.c
+
 # Paths - Now relative
 PORTS_LINUX := $(BACNET_ROOT)/ports/linux
 PORTS_POSIX := $(BACNET_ROOT)/ports/posix
@@ -83,14 +91,17 @@ OBJS := $(SRC:.c=.o)
 
 all: $(BACNET_LIB_TARGET) $(TARGET_BIN)
 
-# Ordre de linkage: trendlog_override.o en PREMIER
+# Ordre de linkage avec --start-group pour résoudre les dépendances circulaires
 $(TARGET_BIN): $(OBJS) $(BACNET_LIB_TARGET)
 	@echo "=== Linking with override priority ==="
 	$(CC) $(LDFLAGS) \
+		-Wl,--start-group \
 		bacnetStackd.o \
 		trendlog_override.o \
 		$(filter-out bacnetStackd.o trendlog_override.o,$(OBJS)) \
-		$(LDLIBS) \
+		$(BACNET_LIB_TARGET) \
+		-Wl,--end-group \
+		-ljansson -lcurl -lpthread \
 		-o $@
 	@echo "Build complete: $@"
 	@echo "=== Verifying rr_trend_log_encode override ==="
