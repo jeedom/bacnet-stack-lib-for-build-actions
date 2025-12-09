@@ -3811,18 +3811,33 @@ static void cleanup_old_requests(void)
 {
     time_t now = time(NULL);
     size_t i;
+    int cleaned = 0;
     
     pthread_mutex_lock(&pending_mutex);
+    
     for (i = 0; i < MAX_PENDING_REQUESTS; i++) {
-        if (pending_requests[i].invoke_id != 0 &&
-            (now - pending_requests[i].timestamp) > 30) {
-            if (pending_requests[i].response_json) {
-                free(pending_requests[i].response_json);
+        if (pending_requests[i].invoke_id != 0) {
+            /* Nettoyer les requêtes de plus de 10 secondes (au lieu de 60) */
+            if (now - pending_requests[i].timestamp > 10) {
+                printf("[CLIENT] Cleaning up expired request slot %zu (invoke_id=%u, age=%ld s)\n",
+                       i, pending_requests[i].invoke_id, (long)(now - pending_requests[i].timestamp));
+                fflush(stdout);
+                
+                if (pending_requests[i].response_json) {
+                    free(pending_requests[i].response_json);
+                }
+                memset(&pending_requests[i], 0, sizeof(PENDING_REQUEST));
+                cleaned++;
             }
-            memset(&pending_requests[i], 0, sizeof(PENDING_REQUEST));
         }
     }
+    
     pthread_mutex_unlock(&pending_mutex);
+    
+    if (cleaned > 0) {
+        printf("[CLIENT] ✓ Cleaned %d expired request(s)\n", cleaned);
+        fflush(stdout);
+    }
 }
 
 static void complete_request(uint8_t invoke_id, const char *json_response, bool is_error)
@@ -4224,29 +4239,53 @@ static int handle_client_devicelist(json_t *root)
     return 0;
 }
 
-/*
- * handle_client_objectlist() - VERSION CORRIGÉE
- * 
- * FIX: Pré-allocation du slot AVANT Send_Read_Property_Request_Address()
- * pour éviter le race condition sur localhost
- */
 
 static int handle_client_objectlist(json_t *root)
 {
     json_t *cmd_obj;
     json_t *device_obj;
     json_t *ip_obj;
+    json_t *include_properties_obj;
     uint32_t target_device_id;
     BACNET_ADDRESS target_addr;
     DISCOVERED_DEVICE *dev;
     uint8_t invoke_id;
     char *response;
     int timeout;
-    size_t i;
+    size_t i, j, k;
     PENDING_REQUEST *req;
-    
+    bool include_properties;
+    json_error_t json_err;
+    json_t *response_root;
+    json_t *objects_array;
+    size_t obj_count;
+    json_t *obj;
+    json_t *type_obj;
+    json_t *instance_obj;
+    const char *type_str;
+    uint32_t instance;
+    BACNET_OBJECT_TYPE obj_type;
+    json_t *properties_obj;
+    BACNET_PROPERTY_ID properties_to_read[10];
+    int prop_count;
+    BACNET_PROPERTY_ID prop_id;
+    const char *prop_name;
+    uint8_t prop_invoke_id;
+    PENDING_REQUEST *prop_req;
+    uint8_t sent_prop_invoke;
+    bool prop_received;
+    int prop_timeout;
+    json_t *prop_response;
+    json_t *value_obj;
+    json_t *unit_obj;
+    json_t *datatype_obj;
+    json_t *prop_data;
+    char *enriched_response;
+
+    cleanup_old_requests();
     cmd_obj = json_object_get(root, "cmd");
     req = NULL;
+    include_properties = false;
     
     if (!cmd_obj || strcmp(json_string_value(cmd_obj), "objectlist") != 0) {
         return -1;  /* Not an objectlist command */
@@ -4254,6 +4293,14 @@ static int handle_client_objectlist(json_t *root)
     
     device_obj = json_object_get(root, "device");
     ip_obj = json_object_get(root, "ip");
+    include_properties_obj = json_object_get(root, "includeProperties");
+    
+    /* Vérifier si on doit inclure les propriétés */
+    if (include_properties_obj && json_is_boolean(include_properties_obj)) {
+        include_properties = json_boolean_value(include_properties_obj);
+        printf("[CLIENT] includeProperties = %s\n", include_properties ? "true" : "false");
+        fflush(stdout);
+    }
     
     if (!device_obj || !json_is_integer(device_obj)) {
         response = client_create_error_response("Missing device parameter");
@@ -4289,7 +4336,7 @@ static int handle_client_objectlist(json_t *root)
     }
     
     /* ═══════════════════════════════════════════════════════════════
-     * CRITICAL FIX: Obtenir invoke_id AVANT Send (approche client)
+     * ÉTAPE 1: LIRE OBJECT_LIST
      * ═══════════════════════════════════════════════════════════════ */
     
     printf("[CLIENT] Getting invoke_id from TSM BEFORE sending...\n");
@@ -4314,7 +4361,7 @@ static int handle_client_objectlist(json_t *root)
     pthread_mutex_lock(&pending_mutex);
     for (i = 0; i < MAX_PENDING_REQUESTS; i++) {
         if (pending_requests[i].invoke_id == 0) {
-            pending_requests[i].invoke_id = invoke_id;  /* Real invoke_id! */
+            pending_requests[i].invoke_id = invoke_id;
             pending_requests[i].completed = false;
             pending_requests[i].error = false;
             pending_requests[i].response_json = NULL;
@@ -4337,96 +4384,86 @@ static int handle_client_objectlist(json_t *root)
         return 0;
     }
     
-    /* ═══════════════════════════════════════════════════════════════
-     * MAINTENANT envoyer (slot DÉJÀ créé avec le bon invoke_id)
-     * ═══════════════════════════════════════════════════════════════ */
-    
     printf("[CLIENT] Sending ReadProperty for OBJECT_LIST to device %u\n", target_device_id);
     fflush(stdout);
     
-    uint8_t sent_invoke_id = Send_Read_Property_Request_Address(
-            &target_addr,
-            1476,  /* max APDU */
-            OBJECT_DEVICE,
-            target_device_id,
-            PROP_OBJECT_LIST,
-            BACNET_ARRAY_ALL);
-    
-    printf("[CLIENT] DEBUG: Send returned invoke_id=%u (expected %u)\n", 
-           sent_invoke_id, invoke_id);
-    fflush(stdout);
-    
-    if (sent_invoke_id == 0) {
-        /* Failed - clean up allocated slot */
-        printf("[CLIENT] ✗ Send_Read_Property_Request_Address failed\n");
+    {
+        uint8_t sent_invoke_id = Send_Read_Property_Request_Address(
+                &target_addr,
+                1476,
+                OBJECT_DEVICE,
+                target_device_id,
+                PROP_OBJECT_LIST,
+                BACNET_ARRAY_ALL);
+        
+        printf("[CLIENT] DEBUG: Send returned invoke_id=%u (expected %u)\n", 
+               sent_invoke_id, invoke_id);
         fflush(stdout);
         
-        pthread_mutex_lock(&pending_mutex);
-        memset(req, 0, sizeof(PENDING_REQUEST));
-        pthread_mutex_unlock(&pending_mutex);
-        
-        response = client_create_error_response("Failed to send request");
-        write(g_client_fd, response, strlen(response));
-        write(g_client_fd, "\n", 1);
-        free(response);
-        return 0;
-    }
-    
-    /* ═══════════════════════════════════════════════════════════════
-     * Vérifier si invoke_id a changé (gérer le cas improbable)
-     * ═══════════════════════════════════════════════════════════════ */
-    
-    if (sent_invoke_id != invoke_id) {
-        printf("[CLIENT] ⚠️  WARNING: invoke_id mismatch! allocated=%u, sent=%u\n", 
-               invoke_id, sent_invoke_id);
-        printf("[CLIENT] Re-allocating slot for actual invoke_id=%u\n", sent_invoke_id);
-        fflush(stdout);
-        
-        /* Nettoyer l'ancien slot */
-        pthread_mutex_lock(&pending_mutex);
-        memset(req, 0, sizeof(PENDING_REQUEST));
-        
-        /* Créer nouveau slot avec le vrai invoke_id */
-        for (i = 0; i < MAX_PENDING_REQUESTS; i++) {
-            if (pending_requests[i].invoke_id == 0) {
-                pending_requests[i].invoke_id = sent_invoke_id;
-                pending_requests[i].completed = false;
-                pending_requests[i].error = false;
-                pending_requests[i].response_json = NULL;
-                pending_requests[i].timestamp = time(NULL);
-                req = &pending_requests[i];
-                break;
-            }
-        }
-        pthread_mutex_unlock(&pending_mutex);
-        
-        if (!req) {
-            response = client_create_error_response("Failed to reallocate slot");
+        if (sent_invoke_id == 0) {
+            printf("[CLIENT] ✗ Send_Read_Property_Request_Address failed\n");
+            fflush(stdout);
+            
+            pthread_mutex_lock(&pending_mutex);
+            memset(req, 0, sizeof(PENDING_REQUEST));
+            pthread_mutex_unlock(&pending_mutex);
+            
+            response = client_create_error_response("Failed to send request");
             write(g_client_fd, response, strlen(response));
             write(g_client_fd, "\n", 1);
             free(response);
             return 0;
         }
         
-        invoke_id = sent_invoke_id;  /* Use actual invoke_id */
+        if (sent_invoke_id != invoke_id) {
+            printf("[CLIENT] ⚠️  WARNING: invoke_id mismatch! allocated=%u, sent=%u\n", 
+                   invoke_id, sent_invoke_id);
+            printf("[CLIENT] Re-allocating slot for actual invoke_id=%u\n", sent_invoke_id);
+            fflush(stdout);
+            
+            pthread_mutex_lock(&pending_mutex);
+            memset(req, 0, sizeof(PENDING_REQUEST));
+            
+            for (i = 0; i < MAX_PENDING_REQUESTS; i++) {
+                if (pending_requests[i].invoke_id == 0) {
+                    pending_requests[i].invoke_id = sent_invoke_id;
+                    pending_requests[i].completed = false;
+                    pending_requests[i].error = false;
+                    pending_requests[i].response_json = NULL;
+                    pending_requests[i].timestamp = time(NULL);
+                    req = &pending_requests[i];
+                    break;
+                }
+            }
+            pthread_mutex_unlock(&pending_mutex);
+            
+            if (!req) {
+                response = client_create_error_response("Failed to reallocate slot");
+                write(g_client_fd, response, strlen(response));
+                write(g_client_fd, "\n", 1);
+                free(response);
+                return 0;
+            }
+            
+            invoke_id = sent_invoke_id;
+        }
     }
     
     printf("[CLIENT] ✓ ReadProperty sent successfully (invoke_id=%u)\n", invoke_id);
     fflush(stdout);
     
     /* ═══════════════════════════════════════════════════════════════
-     * Attendre la réponse (TIMEOUT AUGMENTÉ À 60 SECONDES)
+     * Attendre la réponse OBJECT_LIST
      * ═══════════════════════════════════════════════════════════════ */
     
-    printf("[CLIENT] Waiting for response (timeout=60s, polling every 100ms)...\n");
+    printf("[CLIENT] Waiting for OBJECT_LIST response (timeout=60s)...\n");
     fflush(stdout);
     
-    for (timeout = 0; timeout < 600; timeout++) {  /* 60 seconds (600 x 100ms) */
+    for (timeout = 0; timeout < 600; timeout++) {
         usleep(100000);  /* 100ms */
         
         pthread_mutex_lock(&pending_mutex);
         
-        /* Vérifier si la requête est toujours valide */
         if (req->invoke_id != invoke_id) {
             printf("[CLIENT] ⚠️  WARNING: invoke_id changed from %u to %u!\n", 
                    invoke_id, req->invoke_id);
@@ -4434,61 +4471,321 @@ static int handle_client_objectlist(json_t *root)
         }
         
         if (req->completed) {
-            printf("[CLIENT] ✓ Response completed flag detected at %.1fs\n", timeout * 0.1);
+            printf("[CLIENT] ✓ OBJECT_LIST response received after %.1fs\n", timeout * 0.1);
             fflush(stdout);
-            
-            if (req->response_json) {
-                printf("[CLIENT] ✓ Response received after %.1fs (%zu bytes)\n", 
-                       timeout * 0.1, strlen(req->response_json));
-                fflush(stdout);
-                write(g_client_fd, req->response_json, strlen(req->response_json));
-                write(g_client_fd, "\n", 1);
-                free(req->response_json);
-            } else {
-                printf("[CLIENT] ⚠️  WARNING: completed=true but response_json=NULL\n");
-                fflush(stdout);
-            }
-            
+            break;
+        }
+        
+        pthread_mutex_unlock(&pending_mutex);
+        
+        if (timeout > 0 && timeout % 50 == 0) {
+            printf("[CLIENT] Still waiting for OBJECT_LIST... (%.1fs / 60s)\n", timeout * 0.1);
+            fflush(stdout);
+        }
+    }
+    
+    /* Vérifier timeout */
+    if (timeout >= 600) {
+        printf("[CLIENT] ✗ Timeout waiting for OBJECT_LIST after 60 seconds\n");
+        fflush(stdout);
+        
+        pthread_mutex_lock(&pending_mutex);
+        if (req->completed && req->response_json) {
+            printf("[CLIENT] ⚠️  Response arrived JUST before timeout\n");
+            fflush(stdout);
+            write(g_client_fd, req->response_json, strlen(req->response_json));
+            write(g_client_fd, "\n", 1);
+            free(req->response_json);
             memset(req, 0, sizeof(PENDING_REQUEST));
             pthread_mutex_unlock(&pending_mutex);
             return 0;
         }
         
+        memset(req, 0, sizeof(PENDING_REQUEST));
         pthread_mutex_unlock(&pending_mutex);
         
-        /* Log every 5 seconds */
-        if (timeout > 0 && timeout % 50 == 0) {
-            printf("[CLIENT] Still waiting for response... (%.1fs / 60s)\n", timeout * 0.1);
+        response = client_create_error_response("Timeout waiting for OBJECT_LIST (60s)");
+        write(g_client_fd, response, strlen(response));
+        write(g_client_fd, "\n", 1);
+        free(response);
+        return 0;
+    }
+    
+    /* ═══════════════════════════════════════════════════════════════
+     * ÉTAPE 2: LIRE LES PROPRIÉTÉS SI DEMANDÉ
+     * ═══════════════════════════════════════════════════════════════ */
+    
+    if (include_properties && req->response_json) {
+        printf("[CLIENT] ═══════════════════════════════════════════════════════\n");
+        printf("[CLIENT] ÉTAPE 2: Reading properties for all objects...\n");
+        printf("[CLIENT] ═══════════════════════════════════════════════════════\n");
+        fflush(stdout);
+        
+        response_root = json_loads(req->response_json, 0, &json_err);
+        
+        if (!response_root) {
+            printf("[CLIENT] ✗ Failed to parse OBJECT_LIST JSON: %s\n", json_err.text);
             fflush(stdout);
+        } else {
+            objects_array = json_object_get(response_root, "objects");
+            
+            if (objects_array && json_is_array(objects_array)) {
+                obj_count = json_array_size(objects_array);
+                printf("[CLIENT] Found %zu objects, reading properties...\n", obj_count);
+                fflush(stdout);
+                
+                /* Pour chaque objet */
+                for (i = 0; i < obj_count; i++) {
+                    obj = json_array_get(objects_array, i);
+                    if (!obj) continue;
+                    
+                    type_obj = json_object_get(obj, "type");
+                    instance_obj = json_object_get(obj, "instance");
+                    
+                    if (!type_obj || !instance_obj) continue;
+                    
+                    type_str = json_string_value(type_obj);
+                    instance = json_integer_value(instance_obj);
+                    
+                    /* Convertir le type string en BACNET_OBJECT_TYPE */
+                    obj_type = OBJECT_ANALOG_INPUT;  /* default */
+                    
+                    if (strcmp(type_str, "analog-input") == 0) obj_type = OBJECT_ANALOG_INPUT;
+                    else if (strcmp(type_str, "analog-output") == 0) obj_type = OBJECT_ANALOG_OUTPUT;
+                    else if (strcmp(type_str, "analog-value") == 0) obj_type = OBJECT_ANALOG_VALUE;
+                    else if (strcmp(type_str, "binary-input") == 0) obj_type = OBJECT_BINARY_INPUT;
+                    else if (strcmp(type_str, "binary-output") == 0) obj_type = OBJECT_BINARY_OUTPUT;
+                    else if (strcmp(type_str, "binary-value") == 0) obj_type = OBJECT_BINARY_VALUE;
+                    else if (strcmp(type_str, "multi-state-input") == 0) obj_type = OBJECT_MULTI_STATE_INPUT;
+                    else if (strcmp(type_str, "multi-state-output") == 0) obj_type = OBJECT_MULTI_STATE_OUTPUT;
+                    else if (strcmp(type_str, "multi-state-value") == 0) obj_type = OBJECT_MULTI_STATE_VALUE;
+                    else if (strcmp(type_str, "device") == 0) obj_type = OBJECT_DEVICE;
+                    else {
+                        printf("[CLIENT] Skipping unsupported type: %s\n", type_str);
+                        fflush(stdout);
+                        continue;
+                    }
+                    
+                    printf("[CLIENT] [%zu/%zu] Reading properties for %s:%u...\n", 
+                           i + 1, obj_count, type_str, instance);
+                    fflush(stdout);
+                    
+                    /* Créer un objet JSON pour stocker les propriétés */
+                    properties_obj = json_object();
+                    
+                    /* Liste des propriétés à lire selon le type */
+                    prop_count = 0;
+                    
+                    /* Propriétés communes à tous les objets */
+                    properties_to_read[prop_count++] = PROP_OBJECT_NAME;
+                    properties_to_read[prop_count++] = PROP_DESCRIPTION;
+                    
+                    /* Propriétés spécifiques selon le type */
+                    switch (obj_type) {
+                        case OBJECT_ANALOG_INPUT:
+                        case OBJECT_ANALOG_OUTPUT:
+                        case OBJECT_ANALOG_VALUE:
+                            properties_to_read[prop_count++] = PROP_PRESENT_VALUE;
+                            properties_to_read[prop_count++] = PROP_UNITS;
+                            properties_to_read[prop_count++] = PROP_OUT_OF_SERVICE;
+                            properties_to_read[prop_count++] = PROP_STATUS_FLAGS;
+                            break;
+                            
+                        case OBJECT_BINARY_INPUT:
+                        case OBJECT_BINARY_OUTPUT:
+                        case OBJECT_BINARY_VALUE:
+                            properties_to_read[prop_count++] = PROP_PRESENT_VALUE;
+                            properties_to_read[prop_count++] = PROP_OUT_OF_SERVICE;
+                            properties_to_read[prop_count++] = PROP_STATUS_FLAGS;
+                            properties_to_read[prop_count++] = PROP_INACTIVE_TEXT;
+                            properties_to_read[prop_count++] = PROP_ACTIVE_TEXT;
+                            break;
+                            
+                        case OBJECT_MULTI_STATE_INPUT:
+                        case OBJECT_MULTI_STATE_OUTPUT:
+                        case OBJECT_MULTI_STATE_VALUE:
+                            properties_to_read[prop_count++] = PROP_PRESENT_VALUE;
+                            properties_to_read[prop_count++] = PROP_OUT_OF_SERVICE;
+                            properties_to_read[prop_count++] = PROP_STATUS_FLAGS;
+                            properties_to_read[prop_count++] = PROP_STATE_TEXT;
+                            break;
+                            
+                        case OBJECT_DEVICE:
+                            /* Pour device, on lit juste le nom */
+                            break;
+                            
+                        default:
+                            break;
+                    }
+                    
+                    /* Lire chaque propriété */
+                    for (j = 0; j < (size_t)prop_count; j++) {
+                        prop_id = properties_to_read[j];
+                        prop_name = bactext_property_name(prop_id);
+                        
+                        /* Obtenir un nouveau invoke_id */
+                        prop_invoke_id = tsm_next_free_invokeID();
+                        if (prop_invoke_id == 0) {
+                            printf("[CLIENT]   ✗ No free invoke_id for property %s\n", prop_name);
+                            fflush(stdout);
+                            continue;
+                        }
+                        
+                        /* Allouer un slot pour cette requête */
+                        prop_req = NULL;
+                        pthread_mutex_lock(&pending_mutex);
+                        for (k = 0; k < MAX_PENDING_REQUESTS; k++) {
+                            if (pending_requests[k].invoke_id == 0) {
+                                pending_requests[k].invoke_id = prop_invoke_id;
+                                pending_requests[k].completed = false;
+                                pending_requests[k].error = false;
+                                pending_requests[k].response_json = NULL;
+                                pending_requests[k].timestamp = time(NULL);
+                                prop_req = &pending_requests[k];
+                                break;
+                            }
+                        }
+                        pthread_mutex_unlock(&pending_mutex);
+                        
+                        if (!prop_req) {
+                            printf("[CLIENT]   ✗ No free slot for property %s\n", prop_name);
+                            fflush(stdout);
+                            continue;
+                        }
+                        
+                        /* Envoyer la requête ReadProperty */
+                        sent_prop_invoke = Send_Read_Property_Request_Address(
+                            &target_addr,
+                            1476,
+                            obj_type,
+                            instance,
+                            prop_id,
+                            BACNET_ARRAY_ALL
+                        );
+                        
+                        if (sent_prop_invoke == 0) {
+                            printf("[CLIENT]   ✗ Failed to send request for property %s\n", prop_name);
+                            fflush(stdout);
+                            pthread_mutex_lock(&pending_mutex);
+                            memset(prop_req, 0, sizeof(PENDING_REQUEST));
+                            pthread_mutex_unlock(&pending_mutex);
+                            continue;
+                        }
+                        
+                        /* Attendre la réponse (timeout court: 3 secondes) */
+                        prop_received = false;
+                        for (prop_timeout = 0; prop_timeout < 30; prop_timeout++) {
+                            usleep(100000);  /* 100ms */
+                            
+                            pthread_mutex_lock(&pending_mutex);
+                            if (prop_req->completed) {
+                                prop_received = true;
+                                pthread_mutex_unlock(&pending_mutex);
+                                break;
+                            }
+                            pthread_mutex_unlock(&pending_mutex);
+                        }
+                        pthread_mutex_lock(&pending_mutex);
+                        
+                        if (prop_received && prop_req->response_json) {
+                            /* Parser la réponse et extraire la valeur */
+                            prop_response = json_loads(prop_req->response_json, 0, &json_err);
+                            
+                            if (prop_response) {
+                                value_obj = json_object_get(prop_response, "value");
+                                unit_obj = json_object_get(prop_response, "unit");
+                                datatype_obj = json_object_get(prop_response, "datatype");
+                                
+                                /* Créer un objet pour cette propriété */
+                                prop_data = json_object();
+                                
+                                if (value_obj) {
+                                    json_object_set(prop_data, "value", value_obj);
+                                }
+                                if (unit_obj) {
+                                    json_object_set(prop_data, "unit", unit_obj);
+                                }
+                                if (datatype_obj) {
+                                    json_object_set(prop_data, "datatype", datatype_obj);
+                                }
+                                
+                                /* Ajouter à l'objet properties */
+                                json_object_set_new(properties_obj, prop_name, prop_data);
+                                
+                                printf("[CLIENT]   ✓ %s = ", prop_name);
+                                if (json_is_string(value_obj)) {
+                                    printf("\"%s\"\n", json_string_value(value_obj));
+                                } else if (json_is_number(value_obj)) {
+                                    printf("%.2f", json_number_value(value_obj));
+                                    if (unit_obj && json_is_string(unit_obj)) {
+                                        printf(" %s", json_string_value(unit_obj));
+                                    }
+                                    printf("\n");
+                                } else if (json_is_boolean(value_obj)) {
+                                    printf("%s\n", json_boolean_value(value_obj) ? "true" : "false");
+                                } else {
+                                    printf("(value)\n");
+                                }
+                                fflush(stdout);
+                                
+                                json_decref(prop_response);
+                            }
+                            
+                      
+                            free(prop_req->response_json);
+                            memset(prop_req, 0, sizeof(PENDING_REQUEST));
+                            
+                        } else {
+                            printf("[CLIENT]   ⚠️  Timeout reading property %s\n", prop_name);
+                            fflush(stdout);
+                            memset(prop_req, 0, sizeof(PENDING_REQUEST));
+                        }
+                        pthread_mutex_unlock(&pending_mutex);
+                        
+                        /* Petit délai entre chaque propriété */
+                        usleep(50000);  /* 50ms */
+                    }
+                    
+                    /* Ajouter l'objet properties à l'objet */
+                    json_object_set_new(obj, "properties", properties_obj);
+                }
+                
+                printf("[CLIENT] ✓ Finished reading properties for %zu objects\n", obj_count);
+                fflush(stdout);
+            }
+            
+            /* Reconstruire la réponse JSON enrichie */
+            enriched_response = json_dumps(response_root, JSON_COMPACT);
+            if (enriched_response) {
+                printf("[CLIENT] ✓ Enriched response ready (%zu bytes)\n", strlen(enriched_response));
+                fflush(stdout);
+                
+                /* Remplacer l'ancienne réponse */
+                free(req->response_json);
+                req->response_json = enriched_response;
+            }
+            
+            json_decref(response_root);
         }
     }
     
-    /* Timeout après 60 secondes */
-    printf("[CLIENT] ✗ Timeout after 60 seconds\n");
-    fflush(stdout);
+    /* ═══════════════════════════════════════════════════════════════
+     * ENVOYER LA RÉPONSE FINALE
+     * ═══════════════════════════════════════════════════════════════ */
     
-    pthread_mutex_lock(&pending_mutex);
-    
-    /* Vérifier si une réponse est arrivée juste avant le timeout */
-    if (req->completed && req->response_json) {
-        printf("[CLIENT] ⚠️  Response arrived JUST before timeout cleanup\n");
+    if (req->response_json) {
+        printf("[CLIENT] ✓ Sending final response (%zu bytes)\n", strlen(req->response_json));
         fflush(stdout);
         write(g_client_fd, req->response_json, strlen(req->response_json));
         write(g_client_fd, "\n", 1);
         free(req->response_json);
-        memset(req, 0, sizeof(PENDING_REQUEST));
-        pthread_mutex_unlock(&pending_mutex);
-        return 0;
+    } else {
+        printf("[CLIENT] ⚠️  WARNING: completed=true but response_json=NULL\n");
+        fflush(stdout);
     }
     
-    /* Vraiment timeout - nettoyer */
     memset(req, 0, sizeof(PENDING_REQUEST));
     pthread_mutex_unlock(&pending_mutex);
-    
-    response = client_create_error_response("Timeout waiting for response (60s)");
-    write(g_client_fd, response, strlen(response));
-    write(g_client_fd, "\n", 1);
-    free(response);
     
     return 0;
 }
@@ -4514,6 +4811,8 @@ static int handle_client_readprop(json_t *root)
     const char *obj_str;
     const char *prop_str;
     
+    cleanup_old_requests();
+
     cmd_obj = json_object_get(root, "cmd");
     req = NULL;
     
@@ -4811,6 +5110,8 @@ static int handle_client_writeprop(json_t *root)
     BACNET_WRITE_PROPERTY_DATA wp_data;
     BACNET_NPDU_DATA npdu_data;
     
+    cleanup_old_requests();
+
     cmd_obj = json_object_get(root, "cmd");
     req = NULL;
     priority = BACNET_NO_PRIORITY;

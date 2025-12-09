@@ -70,7 +70,7 @@ INCLUDES := -I$(BACNET_SRC_DIR) -I$(PORTS_LINUX) -I$(PORTS_POSIX) \
             -I$(BACNET_ROOT) -I$(BACNET_ROOT)/include
 
 CFLAGS := $(CFLAGS_COMMON) $(INCLUDES) $(PFLAGS)
-LDFLAGS := -Wl,--gc-sections $(LFLAGS)
+LDFLAGS := -Wl,--gc-sections -Wl,--allow-multiple-definition $(LFLAGS)
 LDLIBS := $(BACNET_LIB_TARGET) -ljansson -lcurl -lpthread
 
 # Objects

@@ -6,9 +6,11 @@
 #ifndef TRENDLOG_OVERRIDE_H
 #define TRENDLOG_OVERRIDE_H
 
-#include <stdbool.h>
 #include <stdint.h>
-#include "bacnet/basic/object/trendlog.h"
+#include <stdbool.h>
+#include "bacnet/bacdef.h"
+#include "bacnet/rp.h"
+#include "bacnet/readrange.h"
 
 /**
  * @brief Vide tous les Trendlogs
@@ -35,5 +37,7 @@ void Trendlog_Delete_All(void);
  * @return true si la lecture fonctionne, false sinon
  */
 bool Trendlog_Test_Source_Read(uint32_t instance);
+
+int rr_trend_log_encode(uint8_t *apdu, BACNET_READ_RANGE_DATA *pRequest);
 
 #endif /* TRENDLOG_OVERRIDE_H */
