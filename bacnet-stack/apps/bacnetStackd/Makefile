@@ -79,10 +79,15 @@ OBJS := $(SRC:.c=.o)
 .PHONY: all clean
 
 all: $(BACNET_LIB_TARGET) $(TARGET_BIN)
-
+OBJS_ORDERED := bacnetStackd.o \
+                trendlog_override.o \
+                datetime-init.o \
+                $(filter-out trendlog_override.o bacnetStackd.o datetime-init.o,$(OBJS))
 $(TARGET_BIN): $(OBJS) $(BACNET_LIB_TARGET)
 	$(CC) $(PFLAGS) $(OBJS) $(LFLAGS) $(LDLIBS) -o $@
 	@echo "Build complete: $@"
+      @echo "=== Verifying symbol override ==="
+      @nm $@ | grep "rr_trend_log_encode" || true
 	@size $@ 2>/dev/null || true
 
 $(BACNET_LIB_TARGET):
