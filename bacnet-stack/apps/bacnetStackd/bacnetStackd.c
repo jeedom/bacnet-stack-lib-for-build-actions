@@ -4805,13 +4805,18 @@ static int handle_client_writeprop(json_t *root)
     const char *obj_str;
     const char *prop_str;
     const char *datatype_str;
+    uint8_t Tx_Buf[MAX_MPDU];
+    int pdu_len;
+    int bytes_sent;
+    BACNET_WRITE_PROPERTY_DATA wp_data;
+    BACNET_NPDU_DATA npdu_data;
     
     cmd_obj = json_object_get(root, "cmd");
     req = NULL;
     priority = BACNET_NO_PRIORITY;
     
     if (!cmd_obj || strcmp(json_string_value(cmd_obj), "writeprop") != 0) {
-        return -1;  /* Not a writeprop command */
+        return -1;
     }
     
     /* Parse parameters */
@@ -4867,16 +4872,16 @@ static int handle_client_writeprop(json_t *root)
         }
     }
     
-    /* Parse object ID (format: "analog-output:3001") */
+    /* Parse object ID */
     if (!parse_object_id(obj_str, &obj_type, &obj_instance)) {
-        response = client_create_error_response("Invalid object format (use type:instance)");
+        response = client_create_error_response("Invalid object format");
         write(g_client_fd, response, strlen(response));
         write(g_client_fd, "\n", 1);
         free(response);
         return 0;
     }
     
-    /* Parse property name */
+    /* Parse property */
     prop_id = MAX_BACNET_PROPERTY_ID;
     if (strcasecmp(prop_str, "present-value") == 0) {
         prop_id = PROP_PRESENT_VALUE;
@@ -4884,13 +4889,6 @@ static int handle_client_writeprop(json_t *root)
         prop_id = PROP_DESCRIPTION;
     } else if (strcasecmp(prop_str, "out-of-service") == 0) {
         prop_id = PROP_OUT_OF_SERVICE;
-    } else {
-        /* Try to parse as numeric property ID */
-        char *endptr;
-        long prop_num = strtol(prop_str, &endptr, 10);
-        if (*endptr == '\0' && prop_num >= 0 && prop_num < MAX_BACNET_PROPERTY_ID) {
-            prop_id = (BACNET_PROPERTY_ID)prop_num;
-        }
     }
     
     if (prop_id >= MAX_BACNET_PROPERTY_ID) {
@@ -4907,7 +4905,6 @@ static int handle_client_writeprop(json_t *root)
     if (datatype_obj && json_is_string(datatype_obj)) {
         datatype_str = json_string_value(datatype_obj);
     } else {
-        /* Try to auto-detect from JSON type */
         if (json_is_real(value_obj)) {
             datatype_str = "real";
         } else if (json_is_integer(value_obj)) {
@@ -4917,7 +4914,7 @@ static int handle_client_writeprop(json_t *root)
         } else if (json_is_string(value_obj)) {
             datatype_str = "string";
         } else {
-            datatype_str = "real";  /* default */
+            datatype_str = "real";
         }
     }
     
@@ -4927,26 +4924,6 @@ static int handle_client_writeprop(json_t *root)
             app_value.type.Real = (float)atof(json_string_value(value_obj));
         } else if (json_is_number(value_obj)) {
             app_value.type.Real = (float)json_number_value(value_obj);
-        } else {
-            response = client_create_error_response("Invalid value for real type");
-            write(g_client_fd, response, strlen(response));
-            write(g_client_fd, "\n", 1);
-            free(response);
-            return 0;
-        }
-    }
-    else if (strcasecmp(datatype_str, "double") == 0) {
-        app_value.tag = BACNET_APPLICATION_TAG_DOUBLE;
-        if (json_is_string(value_obj)) {
-            app_value.type.Double = atof(json_string_value(value_obj));
-        } else if (json_is_number(value_obj)) {
-            app_value.type.Double = json_number_value(value_obj);
-        } else {
-            response = client_create_error_response("Invalid value for double type");
-            write(g_client_fd, response, strlen(response));
-            write(g_client_fd, "\n", 1);
-            free(response);
-            return 0;
         }
     }
     else if (strcasecmp(datatype_str, "unsigned") == 0) {
@@ -4955,73 +4932,16 @@ static int handle_client_writeprop(json_t *root)
             app_value.type.Unsigned_Int = (uint32_t)atol(json_string_value(value_obj));
         } else if (json_is_integer(value_obj)) {
             app_value.type.Unsigned_Int = (uint32_t)json_integer_value(value_obj);
-        } else {
-            response = client_create_error_response("Invalid value for unsigned type");
-            write(g_client_fd, response, strlen(response));
-            write(g_client_fd, "\n", 1);
-            free(response);
-            return 0;
         }
     }
-    else if (strcasecmp(datatype_str, "signed") == 0 || strcasecmp(datatype_str, "integer") == 0) {
-        app_value.tag = BACNET_APPLICATION_TAG_SIGNED_INT;
-        if (json_is_string(value_obj)) {
-            app_value.type.Signed_Int = atol(json_string_value(value_obj));
-        } else if (json_is_integer(value_obj)) {
-            app_value.type.Signed_Int = (int32_t)json_integer_value(value_obj);
-        } else {
-            response = client_create_error_response("Invalid value for signed type");
-            write(g_client_fd, response, strlen(response));
-            write(g_client_fd, "\n", 1);
-            free(response);
-            return 0;
-        }
-    }
-    else if (strcasecmp(datatype_str, "boolean") == 0 || strcasecmp(datatype_str, "bool") == 0) {
+    else if (strcasecmp(datatype_str, "boolean") == 0) {
         app_value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
         if (json_is_boolean(value_obj)) {
             app_value.type.Boolean = json_boolean_value(value_obj);
         } else if (json_is_string(value_obj)) {
             const char *val_str = json_string_value(value_obj);
-            app_value.type.Boolean = (strcasecmp(val_str, "true") == 0 || 
-                                     strcmp(val_str, "1") == 0);
-        } else if (json_is_integer(value_obj)) {
-            app_value.type.Boolean = (json_integer_value(value_obj) != 0);
-        } else {
-            response = client_create_error_response("Invalid value for boolean type");
-            write(g_client_fd, response, strlen(response));
-            write(g_client_fd, "\n", 1);
-            free(response);
-            return 0;
+            app_value.type.Boolean = (strcasecmp(val_str, "true") == 0 || strcmp(val_str, "1") == 0);
         }
-    }
-    else if (strcasecmp(datatype_str, "enumerated") == 0 || strcasecmp(datatype_str, "enum") == 0) {
-        app_value.tag = BACNET_APPLICATION_TAG_ENUMERATED;
-        if (json_is_string(value_obj)) {
-            app_value.type.Enumerated = (uint32_t)atol(json_string_value(value_obj));
-        } else if (json_is_integer(value_obj)) {
-            app_value.type.Enumerated = (uint32_t)json_integer_value(value_obj);
-        } else {
-            response = client_create_error_response("Invalid value for enumerated type");
-            write(g_client_fd, response, strlen(response));
-            write(g_client_fd, "\n", 1);
-            free(response);
-            return 0;
-        }
-    }
-    else if (strcasecmp(datatype_str, "string") == 0 || strcasecmp(datatype_str, "character-string") == 0) {
-        const char *str_val;
-        app_value.tag = BACNET_APPLICATION_TAG_CHARACTER_STRING;
-        if (json_is_string(value_obj)) {
-            str_val = json_string_value(value_obj);
-        } else {
-            response = client_create_error_response("Value must be string for string type");
-            write(g_client_fd, response, strlen(response));
-            write(g_client_fd, "\n", 1);
-            free(response);
-            return 0;
-        }
-        characterstring_init_ansi(&app_value.type.Character_String, str_val);
     }
     else if (strcasecmp(datatype_str, "null") == 0) {
         app_value.tag = BACNET_APPLICATION_TAG_NULL;
@@ -5036,7 +4956,6 @@ static int handle_client_writeprop(json_t *root)
     
     /* Get device address */
     if (ip_obj && json_is_string(ip_obj)) {
-        /* Use provided IP */
         if (!ip_to_bacnet_address(json_string_value(ip_obj), &target_addr)) {
             response = client_create_error_response("Invalid IP address");
             write(g_client_fd, response, strlen(response));
@@ -5045,10 +4964,9 @@ static int handle_client_writeprop(json_t *root)
             return 0;
         }
     } else {
-        /* Look up in discovered devices */
         dev = get_device_by_id(target_device_id);
         if (!dev) {
-            response = client_create_error_response("Device not found (run whois first)");
+            response = client_create_error_response("Device not found");
             write(g_client_fd, response, strlen(response));
             write(g_client_fd, "\n", 1);
             free(response);
@@ -5057,23 +4975,15 @@ static int handle_client_writeprop(json_t *root)
         memcpy(&target_addr, &dev->address, sizeof(BACNET_ADDRESS));
     }
     
-    /* Allocate invoke_id and request slot BEFORE sending */
-    printf("[CLIENT] Getting invoke_id from TSM BEFORE sending...\n");
-    fflush(stdout);
-    
+    /* Allocate invoke_id */
     invoke_id = tsm_next_free_invokeID();
     if (invoke_id == 0) {
-        printf("[CLIENT] ✗ No free invoke_id available from TSM\n");
-        fflush(stdout);
-        response = client_create_error_response("No free invoke ID available");
+        response = client_create_error_response("No free invoke ID");
         write(g_client_fd, response, strlen(response));
         write(g_client_fd, "\n", 1);
         free(response);
         return 0;
     }
-    
-    printf("[CLIENT] ✓ Allocated invoke_id=%u from TSM\n", invoke_id);
-    fflush(stdout);
     
     /* Allocate request slot */
     pthread_mutex_lock(&pending_mutex);
@@ -5085,16 +4995,12 @@ static int handle_client_writeprop(json_t *root)
             pending_requests[i].response_json = NULL;
             pending_requests[i].timestamp = time(NULL);
             req = &pending_requests[i];
-            printf("[CLIENT] ✓ Slot %zu allocated for invoke_id=%u\n", i, invoke_id);
-            fflush(stdout);
             break;
         }
     }
     pthread_mutex_unlock(&pending_mutex);
     
     if (!req) {
-        printf("[CLIENT] ✗ No free request slot available\n");
-        fflush(stdout);
         response = client_create_error_response("No free request slot");
         write(g_client_fd, response, strlen(response));
         write(g_client_fd, "\n", 1);
@@ -5102,117 +5008,81 @@ static int handle_client_writeprop(json_t *root)
         return 0;
     }
     
-    /* Send WriteProperty request */
-    printf("[CLIENT] Sending WriteProperty: %s[%u].%s (priority=%u) to device %u\n",
-           bactext_object_type_name(obj_type), obj_instance, prop_str, priority, target_device_id);
-    fflush(stdout);
+    /* Encode WriteProperty request manually */
+    memset(&wp_data, 0, sizeof(wp_data));
+    wp_data.object_type = obj_type;
+    wp_data.object_instance = obj_instance;
+    wp_data.object_property = prop_id;
+    wp_data.array_index = BACNET_ARRAY_ALL;
+    wp_data.priority = priority;
     
-    uint8_t sent_invoke_id = Send_Write_Property_Request_Address(
-        &target_addr,
-        1476,  /* max APDU */
-        obj_type,
-        obj_instance,
-        prop_id,
-        &app_value,
-        priority,
-        BACNET_ARRAY_ALL);
-    
-    printf("[CLIENT] DEBUG: Send returned invoke_id=%u (expected %u)\n", 
-           sent_invoke_id, invoke_id);
-    fflush(stdout);
-    
-    if (sent_invoke_id == 0) {
-        printf("[CLIENT] ✗ Send_Write_Property_Request_Address failed\n");
-        fflush(stdout);
-        
+    pdu_len = bacapp_encode_application_data(wp_data.application_data, &app_value);
+    if (pdu_len <= 0) {
         pthread_mutex_lock(&pending_mutex);
         memset(req, 0, sizeof(PENDING_REQUEST));
         pthread_mutex_unlock(&pending_mutex);
         
-        response = client_create_error_response("Failed to send request");
+        response = client_create_error_response("Failed to encode value");
+        write(g_client_fd, response, strlen(response));
+        write(g_client_fd, "\n", 1);
+        free(response);
+        return 0;
+    }
+    wp_data.application_data_len = pdu_len;
+    
+    /* Encode NPDU */
+    npdu_encode_npdu_data(&npdu_data, true, MESSAGE_PRIORITY_NORMAL);
+    pdu_len = npdu_encode_pdu(&Tx_Buf[0], &target_addr, NULL, &npdu_data);
+    
+    /* Encode APDU */
+    pdu_len += wp_encode_apdu(&Tx_Buf[pdu_len], invoke_id, &wp_data);
+    
+    /* Register TSM transaction */
+    tsm_set_confirmed_unsegmented_transaction(invoke_id, &target_addr, &npdu_data, &Tx_Buf[0], pdu_len);
+    
+    /* Send packet */
+    bytes_sent = datalink_send_pdu(&target_addr, &npdu_data, &Tx_Buf[0], pdu_len);
+    
+    if (bytes_sent <= 0) {
+        tsm_free_invoke_id(invoke_id);
+        pthread_mutex_lock(&pending_mutex);
+        memset(req, 0, sizeof(PENDING_REQUEST));
+        pthread_mutex_unlock(&pending_mutex);
+        
+        response = client_create_error_response("Failed to send packet");
         write(g_client_fd, response, strlen(response));
         write(g_client_fd, "\n", 1);
         free(response);
         return 0;
     }
     
-    /* Handle invoke_id mismatch */
-    if (sent_invoke_id != invoke_id) {
-        printf("[CLIENT] ⚠️  WARNING: invoke_id mismatch! allocated=%u, sent=%u\n", 
-               invoke_id, sent_invoke_id);
-        fflush(stdout);
-        
-        pthread_mutex_lock(&pending_mutex);
-        memset(req, 0, sizeof(PENDING_REQUEST));
-        
-        for (i = 0; i < MAX_PENDING_REQUESTS; i++) {
-            if (pending_requests[i].invoke_id == 0) {
-                pending_requests[i].invoke_id = sent_invoke_id;
-                pending_requests[i].completed = false;
-                pending_requests[i].error = false;
-                pending_requests[i].response_json = NULL;
-                pending_requests[i].timestamp = time(NULL);
-                req = &pending_requests[i];
-                break;
-            }
-        }
-        pthread_mutex_unlock(&pending_mutex);
-        
-        if (!req) {
-            response = client_create_error_response("Failed to reallocate slot");
-            write(g_client_fd, response, strlen(response));
-            write(g_client_fd, "\n", 1);
-            free(response);
-            return 0;
-        }
-        
-        invoke_id = sent_invoke_id;
-    }
-    
-    printf("[CLIENT] ✓ WriteProperty sent successfully (invoke_id=%u)\n", invoke_id);
+    printf("[CLIENT] WriteProperty sent (invoke_id=%u, %d bytes)\n", invoke_id, bytes_sent);
     fflush(stdout);
     
-    /* Wait for response (60 seconds timeout) */
-    printf("[CLIENT] Waiting for response (timeout=60s)...\n");
-    fflush(stdout);
-    
+    /* Wait for response */
     for (timeout = 0; timeout < 600; timeout++) {
-        usleep(100000);  /* 100ms */
+        usleep(100000);
         
         pthread_mutex_lock(&pending_mutex);
-        
         if (req->completed) {
-            printf("[CLIENT] ✓ Response completed after %.1fs\n", timeout * 0.1);
-            fflush(stdout);
-            
             if (req->response_json) {
                 write(g_client_fd, req->response_json, strlen(req->response_json));
                 write(g_client_fd, "\n", 1);
                 free(req->response_json);
             }
-            
             memset(req, 0, sizeof(PENDING_REQUEST));
             pthread_mutex_unlock(&pending_mutex);
             return 0;
         }
-        
         pthread_mutex_unlock(&pending_mutex);
-        
-        if (timeout > 0 && timeout % 50 == 0) {
-            printf("[CLIENT] Still waiting... (%.1fs / 60s)\n", timeout * 0.1);
-            fflush(stdout);
-        }
     }
     
     /* Timeout */
-    printf("[CLIENT] ✗ Timeout after 60 seconds\n");
-    fflush(stdout);
-    
     pthread_mutex_lock(&pending_mutex);
     memset(req, 0, sizeof(PENDING_REQUEST));
     pthread_mutex_unlock(&pending_mutex);
     
-    response = client_create_error_response("Timeout waiting for response (60s)");
+    response = client_create_error_response("Timeout");
     write(g_client_fd, response, strlen(response));
     write(g_client_fd, "\n", 1);
     free(response);
