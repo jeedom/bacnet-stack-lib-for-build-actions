@@ -136,6 +136,8 @@ static void client_reject_handler(BACNET_ADDRESS *src, uint8_t invoke_id,
 static int handle_client_whois(json_t *root);
 static int handle_client_devicelist(json_t *root);
 static int handle_client_objectlist(json_t *root);
+static int handle_client_readprop(json_t *root);
+static int handle_client_writeprop(json_t *root);
 
 /* ============================================================================
  * FIN STRUCTURES CLIENT
@@ -3145,6 +3147,14 @@ static int handle_socket_line(const char *line)
                 json_decref(root);
                 return 0;
             }
+            if (handle_client_readprop(root) == 0) {
+                json_decref(root);
+                return 0;
+            }
+            if (handle_client_writeprop(root) == 0) {
+                json_decref(root);
+                return 0;
+            }
             /* Add more client handlers here as needed */
             
             json_decref(root);
@@ -4472,6 +4482,733 @@ static int handle_client_objectlist(json_t *root)
     }
     
     /* Vraiment timeout - nettoyer */
+    memset(req, 0, sizeof(PENDING_REQUEST));
+    pthread_mutex_unlock(&pending_mutex);
+    
+    response = client_create_error_response("Timeout waiting for response (60s)");
+    write(g_client_fd, response, strlen(response));
+    write(g_client_fd, "\n", 1);
+    free(response);
+    
+    return 0;
+}
+
+static int handle_client_readprop(json_t *root)
+{
+    json_t *cmd_obj;
+    json_t *device_obj;
+    json_t *ip_obj;
+    json_t *object_obj;
+    json_t *property_obj;
+    uint32_t target_device_id;
+    BACNET_ADDRESS target_addr;
+    DISCOVERED_DEVICE *dev;
+    BACNET_OBJECT_TYPE obj_type;
+    uint32_t obj_instance;
+    BACNET_PROPERTY_ID prop_id;
+    uint8_t invoke_id;
+    char *response;
+    int timeout;
+    size_t i;
+    PENDING_REQUEST *req;
+    const char *obj_str;
+    const char *prop_str;
+    
+    cmd_obj = json_object_get(root, "cmd");
+    req = NULL;
+    
+    if (!cmd_obj || strcmp(json_string_value(cmd_obj), "readprop") != 0) {
+        return -1;  /* Not a readprop command */
+    }
+    
+    /* Parse parameters */
+    device_obj = json_object_get(root, "device");
+    ip_obj = json_object_get(root, "ip");
+    object_obj = json_object_get(root, "object");
+    property_obj = json_object_get(root, "property");
+    
+    if (!device_obj || !json_is_integer(device_obj)) {
+        response = client_create_error_response("Missing device parameter");
+        write(g_client_fd, response, strlen(response));
+        write(g_client_fd, "\n", 1);
+        free(response);
+        return 0;
+    }
+    
+    if (!object_obj || !json_is_string(object_obj)) {
+        response = client_create_error_response("Missing object parameter");
+        write(g_client_fd, response, strlen(response));
+        write(g_client_fd, "\n", 1);
+        free(response);
+        return 0;
+    }
+    
+    if (!property_obj || !json_is_string(property_obj)) {
+        response = client_create_error_response("Missing property parameter");
+        write(g_client_fd, response, strlen(response));
+        write(g_client_fd, "\n", 1);
+        free(response);
+        return 0;
+    }
+    
+    target_device_id = json_integer_value(device_obj);
+    obj_str = json_string_value(object_obj);
+    prop_str = json_string_value(property_obj);
+    
+    /* Parse object ID (format: "analog-output:3001") */
+    if (!parse_object_id(obj_str, &obj_type, &obj_instance)) {
+        response = client_create_error_response("Invalid object format (use type:instance)");
+        write(g_client_fd, response, strlen(response));
+        write(g_client_fd, "\n", 1);
+        free(response);
+        return 0;
+    }
+    
+    /* Parse property name */
+    prop_id = MAX_BACNET_PROPERTY_ID;
+    if (strcasecmp(prop_str, "present-value") == 0) {
+        prop_id = PROP_PRESENT_VALUE;
+    } else if (strcasecmp(prop_str, "object-name") == 0) {
+        prop_id = PROP_OBJECT_NAME;
+    } else if (strcasecmp(prop_str, "description") == 0) {
+        prop_id = PROP_DESCRIPTION;
+    } else if (strcasecmp(prop_str, "status-flags") == 0) {
+        prop_id = PROP_STATUS_FLAGS;
+    } else if (strcasecmp(prop_str, "out-of-service") == 0) {
+        prop_id = PROP_OUT_OF_SERVICE;
+    } else if (strcasecmp(prop_str, "units") == 0) {
+        prop_id = PROP_UNITS;
+    } else {
+        /* Try to parse as numeric property ID */
+        char *endptr;
+        long prop_num = strtol(prop_str, &endptr, 10);
+        if (*endptr == '\0' && prop_num >= 0 && prop_num < MAX_BACNET_PROPERTY_ID) {
+            prop_id = (BACNET_PROPERTY_ID)prop_num;
+        }
+    }
+    
+    if (prop_id >= MAX_BACNET_PROPERTY_ID) {
+        response = client_create_error_response("Invalid property name");
+        write(g_client_fd, response, strlen(response));
+        write(g_client_fd, "\n", 1);
+        free(response);
+        return 0;
+    }
+    
+    /* Get device address */
+    if (ip_obj && json_is_string(ip_obj)) {
+        /* Use provided IP */
+        if (!ip_to_bacnet_address(json_string_value(ip_obj), &target_addr)) {
+            response = client_create_error_response("Invalid IP address");
+            write(g_client_fd, response, strlen(response));
+            write(g_client_fd, "\n", 1);
+            free(response);
+            return 0;
+        }
+    } else {
+        /* Look up in discovered devices */
+        dev = get_device_by_id(target_device_id);
+        if (!dev) {
+            response = client_create_error_response("Device not found (run whois first)");
+            write(g_client_fd, response, strlen(response));
+            write(g_client_fd, "\n", 1);
+            free(response);
+            return 0;
+        }
+        memcpy(&target_addr, &dev->address, sizeof(BACNET_ADDRESS));
+    }
+    
+    /* Allocate invoke_id and request slot BEFORE sending */
+    printf("[CLIENT] Getting invoke_id from TSM BEFORE sending...\n");
+    fflush(stdout);
+    
+    invoke_id = tsm_next_free_invokeID();
+    if (invoke_id == 0) {
+        printf("[CLIENT] ✗ No free invoke_id available from TSM\n");
+        fflush(stdout);
+        response = client_create_error_response("No free invoke ID available");
+        write(g_client_fd, response, strlen(response));
+        write(g_client_fd, "\n", 1);
+        free(response);
+        return 0;
+    }
+    
+    printf("[CLIENT] ✓ Allocated invoke_id=%u from TSM\n", invoke_id);
+    fflush(stdout);
+    
+    /* Allocate request slot */
+    pthread_mutex_lock(&pending_mutex);
+    for (i = 0; i < MAX_PENDING_REQUESTS; i++) {
+        if (pending_requests[i].invoke_id == 0) {
+            pending_requests[i].invoke_id = invoke_id;
+            pending_requests[i].completed = false;
+            pending_requests[i].error = false;
+            pending_requests[i].response_json = NULL;
+            pending_requests[i].timestamp = time(NULL);
+            req = &pending_requests[i];
+            printf("[CLIENT] ✓ Slot %zu allocated for invoke_id=%u\n", i, invoke_id);
+            fflush(stdout);
+            break;
+        }
+    }
+    pthread_mutex_unlock(&pending_mutex);
+    
+    if (!req) {
+        printf("[CLIENT] ✗ No free request slot available\n");
+        fflush(stdout);
+        response = client_create_error_response("No free request slot");
+        write(g_client_fd, response, strlen(response));
+        write(g_client_fd, "\n", 1);
+        free(response);
+        return 0;
+    }
+    
+    /* Send ReadProperty request */
+    printf("[CLIENT] Sending ReadProperty: %s[%u].%s to device %u\n",
+           bactext_object_type_name(obj_type), obj_instance, prop_str, target_device_id);
+    fflush(stdout);
+    
+    uint8_t sent_invoke_id = Send_Read_Property_Request_Address(
+        &target_addr,
+        1476,  /* max APDU */
+        obj_type,
+        obj_instance,
+        prop_id,
+        BACNET_ARRAY_ALL);
+    
+    printf("[CLIENT] DEBUG: Send returned invoke_id=%u (expected %u)\n", 
+           sent_invoke_id, invoke_id);
+    fflush(stdout);
+    
+    if (sent_invoke_id == 0) {
+        printf("[CLIENT] ✗ Send_Read_Property_Request_Address failed\n");
+        fflush(stdout);
+        
+        pthread_mutex_lock(&pending_mutex);
+        memset(req, 0, sizeof(PENDING_REQUEST));
+        pthread_mutex_unlock(&pending_mutex);
+        
+        response = client_create_error_response("Failed to send request");
+        write(g_client_fd, response, strlen(response));
+        write(g_client_fd, "\n", 1);
+        free(response);
+        return 0;
+    }
+    
+    /* Handle invoke_id mismatch */
+    if (sent_invoke_id != invoke_id) {
+        printf("[CLIENT] ⚠️  WARNING: invoke_id mismatch! allocated=%u, sent=%u\n", 
+               invoke_id, sent_invoke_id);
+        fflush(stdout);
+        
+        pthread_mutex_lock(&pending_mutex);
+        memset(req, 0, sizeof(PENDING_REQUEST));
+        
+        for (i = 0; i < MAX_PENDING_REQUESTS; i++) {
+            if (pending_requests[i].invoke_id == 0) {
+                pending_requests[i].invoke_id = sent_invoke_id;
+                pending_requests[i].completed = false;
+                pending_requests[i].error = false;
+                pending_requests[i].response_json = NULL;
+                pending_requests[i].timestamp = time(NULL);
+                req = &pending_requests[i];
+                break;
+            }
+        }
+        pthread_mutex_unlock(&pending_mutex);
+        
+        if (!req) {
+            response = client_create_error_response("Failed to reallocate slot");
+            write(g_client_fd, response, strlen(response));
+            write(g_client_fd, "\n", 1);
+            free(response);
+            return 0;
+        }
+        
+        invoke_id = sent_invoke_id;
+    }
+    
+    printf("[CLIENT] ✓ ReadProperty sent successfully (invoke_id=%u)\n", invoke_id);
+    fflush(stdout);
+    
+    /* Wait for response (60 seconds timeout) */
+    printf("[CLIENT] Waiting for response (timeout=60s)...\n");
+    fflush(stdout);
+    
+    for (timeout = 0; timeout < 600; timeout++) {
+        usleep(100000);  /* 100ms */
+        
+        pthread_mutex_lock(&pending_mutex);
+        
+        if (req->completed) {
+            printf("[CLIENT] ✓ Response completed after %.1fs\n", timeout * 0.1);
+            fflush(stdout);
+            
+            if (req->response_json) {
+                write(g_client_fd, req->response_json, strlen(req->response_json));
+                write(g_client_fd, "\n", 1);
+                free(req->response_json);
+            }
+            
+            memset(req, 0, sizeof(PENDING_REQUEST));
+            pthread_mutex_unlock(&pending_mutex);
+            return 0;
+        }
+        
+        pthread_mutex_unlock(&pending_mutex);
+        
+        if (timeout > 0 && timeout % 50 == 0) {
+            printf("[CLIENT] Still waiting... (%.1fs / 60s)\n", timeout * 0.1);
+            fflush(stdout);
+        }
+    }
+    
+    /* Timeout */
+    printf("[CLIENT] ✗ Timeout after 60 seconds\n");
+    fflush(stdout);
+    
+    pthread_mutex_lock(&pending_mutex);
+    memset(req, 0, sizeof(PENDING_REQUEST));
+    pthread_mutex_unlock(&pending_mutex);
+    
+    response = client_create_error_response("Timeout waiting for response (60s)");
+    write(g_client_fd, response, strlen(response));
+    write(g_client_fd, "\n", 1);
+    free(response);
+    
+    return 0;
+}
+
+static int handle_client_writeprop(json_t *root)
+{
+    json_t *cmd_obj;
+    json_t *device_obj;
+    json_t *ip_obj;
+    json_t *object_obj;
+    json_t *property_obj;
+    json_t *value_obj;
+    json_t *datatype_obj;
+    json_t *priority_obj;
+    uint32_t target_device_id;
+    BACNET_ADDRESS target_addr;
+    DISCOVERED_DEVICE *dev;
+    BACNET_OBJECT_TYPE obj_type;
+    uint32_t obj_instance;
+    BACNET_PROPERTY_ID prop_id;
+    BACNET_APPLICATION_DATA_VALUE app_value;
+    uint8_t priority;
+    uint8_t invoke_id;
+    char *response;
+    int timeout;
+    size_t i;
+    PENDING_REQUEST *req;
+    const char *obj_str;
+    const char *prop_str;
+    const char *datatype_str;
+    
+    cmd_obj = json_object_get(root, "cmd");
+    req = NULL;
+    priority = BACNET_NO_PRIORITY;
+    
+    if (!cmd_obj || strcmp(json_string_value(cmd_obj), "writeprop") != 0) {
+        return -1;  /* Not a writeprop command */
+    }
+    
+    /* Parse parameters */
+    device_obj = json_object_get(root, "device");
+    ip_obj = json_object_get(root, "ip");
+    object_obj = json_object_get(root, "object");
+    property_obj = json_object_get(root, "property");
+    value_obj = json_object_get(root, "value");
+    datatype_obj = json_object_get(root, "datatype");
+    priority_obj = json_object_get(root, "priority");
+    
+    if (!device_obj || !json_is_integer(device_obj)) {
+        response = client_create_error_response("Missing device parameter");
+        write(g_client_fd, response, strlen(response));
+        write(g_client_fd, "\n", 1);
+        free(response);
+        return 0;
+    }
+    
+    if (!object_obj || !json_is_string(object_obj)) {
+        response = client_create_error_response("Missing object parameter");
+        write(g_client_fd, response, strlen(response));
+        write(g_client_fd, "\n", 1);
+        free(response);
+        return 0;
+    }
+    
+    if (!property_obj || !json_is_string(property_obj)) {
+        response = client_create_error_response("Missing property parameter");
+        write(g_client_fd, response, strlen(response));
+        write(g_client_fd, "\n", 1);
+        free(response);
+        return 0;
+    }
+    
+    if (!value_obj) {
+        response = client_create_error_response("Missing value parameter");
+        write(g_client_fd, response, strlen(response));
+        write(g_client_fd, "\n", 1);
+        free(response);
+        return 0;
+    }
+    
+    target_device_id = json_integer_value(device_obj);
+    obj_str = json_string_value(object_obj);
+    prop_str = json_string_value(property_obj);
+    
+    /* Parse optional priority */
+    if (priority_obj && json_is_integer(priority_obj)) {
+        int prio_val = json_integer_value(priority_obj);
+        if (prio_val >= 1 && prio_val <= 16) {
+            priority = (uint8_t)prio_val;
+        }
+    }
+    
+    /* Parse object ID (format: "analog-output:3001") */
+    if (!parse_object_id(obj_str, &obj_type, &obj_instance)) {
+        response = client_create_error_response("Invalid object format (use type:instance)");
+        write(g_client_fd, response, strlen(response));
+        write(g_client_fd, "\n", 1);
+        free(response);
+        return 0;
+    }
+    
+    /* Parse property name */
+    prop_id = MAX_BACNET_PROPERTY_ID;
+    if (strcasecmp(prop_str, "present-value") == 0) {
+        prop_id = PROP_PRESENT_VALUE;
+    } else if (strcasecmp(prop_str, "description") == 0) {
+        prop_id = PROP_DESCRIPTION;
+    } else if (strcasecmp(prop_str, "out-of-service") == 0) {
+        prop_id = PROP_OUT_OF_SERVICE;
+    } else {
+        /* Try to parse as numeric property ID */
+        char *endptr;
+        long prop_num = strtol(prop_str, &endptr, 10);
+        if (*endptr == '\0' && prop_num >= 0 && prop_num < MAX_BACNET_PROPERTY_ID) {
+            prop_id = (BACNET_PROPERTY_ID)prop_num;
+        }
+    }
+    
+    if (prop_id >= MAX_BACNET_PROPERTY_ID) {
+        response = client_create_error_response("Invalid property name");
+        write(g_client_fd, response, strlen(response));
+        write(g_client_fd, "\n", 1);
+        free(response);
+        return 0;
+    }
+    
+    /* Parse value based on datatype */
+    memset(&app_value, 0, sizeof(app_value));
+    
+    if (datatype_obj && json_is_string(datatype_obj)) {
+        datatype_str = json_string_value(datatype_obj);
+    } else {
+        /* Try to auto-detect from JSON type */
+        if (json_is_real(value_obj)) {
+            datatype_str = "real";
+        } else if (json_is_integer(value_obj)) {
+            datatype_str = "unsigned";
+        } else if (json_is_boolean(value_obj)) {
+            datatype_str = "boolean";
+        } else if (json_is_string(value_obj)) {
+            datatype_str = "string";
+        } else {
+            datatype_str = "real";  /* default */
+        }
+    }
+    
+    if (strcasecmp(datatype_str, "real") == 0) {
+        app_value.tag = BACNET_APPLICATION_TAG_REAL;
+        if (json_is_string(value_obj)) {
+            app_value.type.Real = (float)atof(json_string_value(value_obj));
+        } else if (json_is_number(value_obj)) {
+            app_value.type.Real = (float)json_number_value(value_obj);
+        } else {
+            response = client_create_error_response("Invalid value for real type");
+            write(g_client_fd, response, strlen(response));
+            write(g_client_fd, "\n", 1);
+            free(response);
+            return 0;
+        }
+    }
+    else if (strcasecmp(datatype_str, "double") == 0) {
+        app_value.tag = BACNET_APPLICATION_TAG_DOUBLE;
+        if (json_is_string(value_obj)) {
+            app_value.type.Double = atof(json_string_value(value_obj));
+        } else if (json_is_number(value_obj)) {
+            app_value.type.Double = json_number_value(value_obj);
+        } else {
+            response = client_create_error_response("Invalid value for double type");
+            write(g_client_fd, response, strlen(response));
+            write(g_client_fd, "\n", 1);
+            free(response);
+            return 0;
+        }
+    }
+    else if (strcasecmp(datatype_str, "unsigned") == 0) {
+        app_value.tag = BACNET_APPLICATION_TAG_UNSIGNED_INT;
+        if (json_is_string(value_obj)) {
+            app_value.type.Unsigned_Int = (uint32_t)atol(json_string_value(value_obj));
+        } else if (json_is_integer(value_obj)) {
+            app_value.type.Unsigned_Int = (uint32_t)json_integer_value(value_obj);
+        } else {
+            response = client_create_error_response("Invalid value for unsigned type");
+            write(g_client_fd, response, strlen(response));
+            write(g_client_fd, "\n", 1);
+            free(response);
+            return 0;
+        }
+    }
+    else if (strcasecmp(datatype_str, "signed") == 0 || strcasecmp(datatype_str, "integer") == 0) {
+        app_value.tag = BACNET_APPLICATION_TAG_SIGNED_INT;
+        if (json_is_string(value_obj)) {
+            app_value.type.Signed_Int = atol(json_string_value(value_obj));
+        } else if (json_is_integer(value_obj)) {
+            app_value.type.Signed_Int = (int32_t)json_integer_value(value_obj);
+        } else {
+            response = client_create_error_response("Invalid value for signed type");
+            write(g_client_fd, response, strlen(response));
+            write(g_client_fd, "\n", 1);
+            free(response);
+            return 0;
+        }
+    }
+    else if (strcasecmp(datatype_str, "boolean") == 0 || strcasecmp(datatype_str, "bool") == 0) {
+        app_value.tag = BACNET_APPLICATION_TAG_BOOLEAN;
+        if (json_is_boolean(value_obj)) {
+            app_value.type.Boolean = json_boolean_value(value_obj);
+        } else if (json_is_string(value_obj)) {
+            const char *val_str = json_string_value(value_obj);
+            app_value.type.Boolean = (strcasecmp(val_str, "true") == 0 || 
+                                     strcmp(val_str, "1") == 0);
+        } else if (json_is_integer(value_obj)) {
+            app_value.type.Boolean = (json_integer_value(value_obj) != 0);
+        } else {
+            response = client_create_error_response("Invalid value for boolean type");
+            write(g_client_fd, response, strlen(response));
+            write(g_client_fd, "\n", 1);
+            free(response);
+            return 0;
+        }
+    }
+    else if (strcasecmp(datatype_str, "enumerated") == 0 || strcasecmp(datatype_str, "enum") == 0) {
+        app_value.tag = BACNET_APPLICATION_TAG_ENUMERATED;
+        if (json_is_string(value_obj)) {
+            app_value.type.Enumerated = (uint32_t)atol(json_string_value(value_obj));
+        } else if (json_is_integer(value_obj)) {
+            app_value.type.Enumerated = (uint32_t)json_integer_value(value_obj);
+        } else {
+            response = client_create_error_response("Invalid value for enumerated type");
+            write(g_client_fd, response, strlen(response));
+            write(g_client_fd, "\n", 1);
+            free(response);
+            return 0;
+        }
+    }
+    else if (strcasecmp(datatype_str, "string") == 0 || strcasecmp(datatype_str, "character-string") == 0) {
+        const char *str_val;
+        app_value.tag = BACNET_APPLICATION_TAG_CHARACTER_STRING;
+        if (json_is_string(value_obj)) {
+            str_val = json_string_value(value_obj);
+        } else {
+            response = client_create_error_response("Value must be string for string type");
+            write(g_client_fd, response, strlen(response));
+            write(g_client_fd, "\n", 1);
+            free(response);
+            return 0;
+        }
+        characterstring_init_ansi(&app_value.type.Character_String, str_val);
+    }
+    else if (strcasecmp(datatype_str, "null") == 0) {
+        app_value.tag = BACNET_APPLICATION_TAG_NULL;
+    }
+    else {
+        response = client_create_error_response("Unknown datatype");
+        write(g_client_fd, response, strlen(response));
+        write(g_client_fd, "\n", 1);
+        free(response);
+        return 0;
+    }
+    
+    /* Get device address */
+    if (ip_obj && json_is_string(ip_obj)) {
+        /* Use provided IP */
+        if (!ip_to_bacnet_address(json_string_value(ip_obj), &target_addr)) {
+            response = client_create_error_response("Invalid IP address");
+            write(g_client_fd, response, strlen(response));
+            write(g_client_fd, "\n", 1);
+            free(response);
+            return 0;
+        }
+    } else {
+        /* Look up in discovered devices */
+        dev = get_device_by_id(target_device_id);
+        if (!dev) {
+            response = client_create_error_response("Device not found (run whois first)");
+            write(g_client_fd, response, strlen(response));
+            write(g_client_fd, "\n", 1);
+            free(response);
+            return 0;
+        }
+        memcpy(&target_addr, &dev->address, sizeof(BACNET_ADDRESS));
+    }
+    
+    /* Allocate invoke_id and request slot BEFORE sending */
+    printf("[CLIENT] Getting invoke_id from TSM BEFORE sending...\n");
+    fflush(stdout);
+    
+    invoke_id = tsm_next_free_invokeID();
+    if (invoke_id == 0) {
+        printf("[CLIENT] ✗ No free invoke_id available from TSM\n");
+        fflush(stdout);
+        response = client_create_error_response("No free invoke ID available");
+        write(g_client_fd, response, strlen(response));
+        write(g_client_fd, "\n", 1);
+        free(response);
+        return 0;
+    }
+    
+    printf("[CLIENT] ✓ Allocated invoke_id=%u from TSM\n", invoke_id);
+    fflush(stdout);
+    
+    /* Allocate request slot */
+    pthread_mutex_lock(&pending_mutex);
+    for (i = 0; i < MAX_PENDING_REQUESTS; i++) {
+        if (pending_requests[i].invoke_id == 0) {
+            pending_requests[i].invoke_id = invoke_id;
+            pending_requests[i].completed = false;
+            pending_requests[i].error = false;
+            pending_requests[i].response_json = NULL;
+            pending_requests[i].timestamp = time(NULL);
+            req = &pending_requests[i];
+            printf("[CLIENT] ✓ Slot %zu allocated for invoke_id=%u\n", i, invoke_id);
+            fflush(stdout);
+            break;
+        }
+    }
+    pthread_mutex_unlock(&pending_mutex);
+    
+    if (!req) {
+        printf("[CLIENT] ✗ No free request slot available\n");
+        fflush(stdout);
+        response = client_create_error_response("No free request slot");
+        write(g_client_fd, response, strlen(response));
+        write(g_client_fd, "\n", 1);
+        free(response);
+        return 0;
+    }
+    
+    /* Send WriteProperty request */
+    printf("[CLIENT] Sending WriteProperty: %s[%u].%s (priority=%u) to device %u\n",
+           bactext_object_type_name(obj_type), obj_instance, prop_str, priority, target_device_id);
+    fflush(stdout);
+    
+    uint8_t sent_invoke_id = Send_Write_Property_Request_Address(
+        &target_addr,
+        1476,  /* max APDU */
+        obj_type,
+        obj_instance,
+        prop_id,
+        &app_value,
+        priority,
+        BACNET_ARRAY_ALL);
+    
+    printf("[CLIENT] DEBUG: Send returned invoke_id=%u (expected %u)\n", 
+           sent_invoke_id, invoke_id);
+    fflush(stdout);
+    
+    if (sent_invoke_id == 0) {
+        printf("[CLIENT] ✗ Send_Write_Property_Request_Address failed\n");
+        fflush(stdout);
+        
+        pthread_mutex_lock(&pending_mutex);
+        memset(req, 0, sizeof(PENDING_REQUEST));
+        pthread_mutex_unlock(&pending_mutex);
+        
+        response = client_create_error_response("Failed to send request");
+        write(g_client_fd, response, strlen(response));
+        write(g_client_fd, "\n", 1);
+        free(response);
+        return 0;
+    }
+    
+    /* Handle invoke_id mismatch */
+    if (sent_invoke_id != invoke_id) {
+        printf("[CLIENT] ⚠️  WARNING: invoke_id mismatch! allocated=%u, sent=%u\n", 
+               invoke_id, sent_invoke_id);
+        fflush(stdout);
+        
+        pthread_mutex_lock(&pending_mutex);
+        memset(req, 0, sizeof(PENDING_REQUEST));
+        
+        for (i = 0; i < MAX_PENDING_REQUESTS; i++) {
+            if (pending_requests[i].invoke_id == 0) {
+                pending_requests[i].invoke_id = sent_invoke_id;
+                pending_requests[i].completed = false;
+                pending_requests[i].error = false;
+                pending_requests[i].response_json = NULL;
+                pending_requests[i].timestamp = time(NULL);
+                req = &pending_requests[i];
+                break;
+            }
+        }
+        pthread_mutex_unlock(&pending_mutex);
+        
+        if (!req) {
+            response = client_create_error_response("Failed to reallocate slot");
+            write(g_client_fd, response, strlen(response));
+            write(g_client_fd, "\n", 1);
+            free(response);
+            return 0;
+        }
+        
+        invoke_id = sent_invoke_id;
+    }
+    
+    printf("[CLIENT] ✓ WriteProperty sent successfully (invoke_id=%u)\n", invoke_id);
+    fflush(stdout);
+    
+    /* Wait for response (60 seconds timeout) */
+    printf("[CLIENT] Waiting for response (timeout=60s)...\n");
+    fflush(stdout);
+    
+    for (timeout = 0; timeout < 600; timeout++) {
+        usleep(100000);  /* 100ms */
+        
+        pthread_mutex_lock(&pending_mutex);
+        
+        if (req->completed) {
+            printf("[CLIENT] ✓ Response completed after %.1fs\n", timeout * 0.1);
+            fflush(stdout);
+            
+            if (req->response_json) {
+                write(g_client_fd, req->response_json, strlen(req->response_json));
+                write(g_client_fd, "\n", 1);
+                free(req->response_json);
+            }
+            
+            memset(req, 0, sizeof(PENDING_REQUEST));
+            pthread_mutex_unlock(&pending_mutex);
+            return 0;
+        }
+        
+        pthread_mutex_unlock(&pending_mutex);
+        
+        if (timeout > 0 && timeout % 50 == 0) {
+            printf("[CLIENT] Still waiting... (%.1fs / 60s)\n", timeout * 0.1);
+            fflush(stdout);
+        }
+    }
+    
+    /* Timeout */
+    printf("[CLIENT] ✗ Timeout after 60 seconds\n");
+    fflush(stdout);
+    
+    pthread_mutex_lock(&pending_mutex);
     memset(req, 0, sizeof(PENDING_REQUEST));
     pthread_mutex_unlock(&pending_mutex);
     
