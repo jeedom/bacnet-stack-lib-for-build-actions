@@ -264,7 +264,7 @@ int rr_trend_log_encode(
     TL_LOG_INFO *info;
     TL_DATA_REC *rec;
     BACNET_BIT_STRING TempBits;
-    int32_t i, j, Idx;
+    int32_t i, j;
     int32_t log_index = 0;
     int32_t count = 0;
     BACNET_DATE_TIME TempTime;
@@ -366,9 +366,9 @@ int rr_trend_log_encode(
                     
                     /* Parcourir de la fin vers le début */
                     for (i = (int32_t)info->ulRecordCount - 1; i >= 0; i--) {
-                        /* Calculer l'index dans le buffer circulaire */
-                        Idx = (info->iIndex - info->ulRecordCount + i + TL_MAX_ENTRIES) % TL_MAX_ENTRIES;
-                        rec = &Logs[instance][Idx];
+                        /* ===  UTILISER L'API PUBLIQUE === */
+                        rec = Trend_Log_Get_Record(instance, i);
+                        if (!rec) continue;
                         
                         /* Comparer le timestamp */
                         if (rec->tTimeStamp <= ref_time) {
@@ -393,8 +393,9 @@ int rr_trend_log_encode(
                     
                     /* Parcourir du début vers la fin */
                     for (i = 0; i < (int32_t)info->ulRecordCount; i++) {
-                        Idx = (info->iIndex - info->ulRecordCount + i + TL_MAX_ENTRIES) % TL_MAX_ENTRIES;
-                        rec = &Logs[instance][Idx];
+                        /* ===  UTILISER L'API PUBLIQUE === */
+                        rec = Trend_Log_Get_Record(instance, i);
+                        if (!rec) continue;
                         
                         /* Comparer le timestamp */
                         if (rec->tTimeStamp >= ref_time) {
@@ -511,9 +512,12 @@ int rr_trend_log_encode(
     for (i = 0; i < count; i++) {
         j = log_index + i;
         
-        /* Calculer l'index dans le buffer circulaire */
-        Idx = (info->iIndex - info->ulRecordCount + j + TL_MAX_ENTRIES) % TL_MAX_ENTRIES;
-        rec = &Logs[instance][Idx];
+        /* ===  UTILISER L'API PUBLIQUE === */
+        rec = Trend_Log_Get_Record(instance, j);
+        if (!rec) {
+            printf("[READRANGE] TL[%u]: Failed to get record %d\n", instance, j);
+            continue;
+        }
         
         /* Opening tag pour un log-record [0] */
         iLen += encode_opening_tag(&apdu[iLen], 0);

@@ -6,11 +6,26 @@
 #ifndef TRENDLOG_OVERRIDE_H
 #define TRENDLOG_OVERRIDE_H
 
-#include <stdint.h>
 #include <stdbool.h>
-#include "bacnet/bacdef.h"
+#include <stdint.h>
+#include <string.h>
+#include <stdio.h>
+#include <time.h>
+#include "bacnet/basic/object/trendlog.h"
+#include "bacnet/basic/object/device.h"
+#include "bacnet/basic/object/ai.h"
+#include "bacnet/basic/object/ao.h"
+#include "bacnet/basic/object/av.h"
+#include "bacnet/basic/object/bi.h"
+#include "bacnet/basic/object/bo.h"
+#include "bacnet/basic/object/bv.h"
+#include "bacnet/wp.h"
 #include "bacnet/rp.h"
+#include "bacnet/bacapp.h"
+#include "bacnet/bacdcode.h"
 #include "bacnet/readrange.h"
+#include "bacnet/datetime.h"
+#include "trendlog_override.h"
 
 /**
  * @brief Vide tous les Trendlogs
