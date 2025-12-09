@@ -4224,6 +4224,39 @@ static int handle_client_devicelist(json_t *root)
     return 0;
 }
 
+static void cleanup_old_requests(void)
+{
+    time_t now = time(NULL);
+    size_t i;
+    int cleaned = 0;
+    
+    pthread_mutex_lock(&pending_mutex);
+    
+    for (i = 0; i < MAX_PENDING_REQUESTS; i++) {
+        if (pending_requests[i].invoke_id != 0) {
+            /* Nettoyer les requêtes de plus de 10 secondes (au lieu de 60) */
+            if (now - pending_requests[i].timestamp > 10) {
+                printf("[CLIENT] Cleaning up expired request slot %zu (invoke_id=%u, age=%ld s)\n",
+                       i, pending_requests[i].invoke_id, (long)(now - pending_requests[i].timestamp));
+                fflush(stdout);
+                
+                if (pending_requests[i].response_json) {
+                    free(pending_requests[i].response_json);
+                }
+                memset(&pending_requests[i], 0, sizeof(PENDING_REQUEST));
+                cleaned++;
+            }
+        }
+    }
+    
+    pthread_mutex_unlock(&pending_mutex);
+    
+    if (cleaned > 0) {
+        printf("[CLIENT] ✓ Cleaned %d expired request(s)\n", cleaned);
+        fflush(stdout);
+    }
+}
+
 
 
 static int handle_client_objectlist(json_t *root)
@@ -4267,7 +4300,8 @@ static int handle_client_objectlist(json_t *root)
     json_t *datatype_obj;
     json_t *prop_data;
     char *enriched_response;
-    
+
+    cleanup_old_requests();
     cmd_obj = json_object_get(root, "cmd");
     req = NULL;
     include_properties = false;
@@ -4670,6 +4704,7 @@ static int handle_client_objectlist(json_t *root)
                             }
                             pthread_mutex_unlock(&pending_mutex);
                         }
+                        pthread_mutex_lock(&pending_mutex);
                         
                         if (prop_received && prop_req->response_json) {
                             /* Parser la réponse et extraire la valeur */
@@ -4715,20 +4750,16 @@ static int handle_client_objectlist(json_t *root)
                                 json_decref(prop_response);
                             }
                             
-                            /* Nettoyer le slot */
-                            pthread_mutex_lock(&pending_mutex);
+                      
                             free(prop_req->response_json);
                             memset(prop_req, 0, sizeof(PENDING_REQUEST));
-                            pthread_mutex_unlock(&pending_mutex);
                             
                         } else {
                             printf("[CLIENT]   ⚠️  Timeout reading property %s\n", prop_name);
                             fflush(stdout);
-                            
-                            pthread_mutex_lock(&pending_mutex);
                             memset(prop_req, 0, sizeof(PENDING_REQUEST));
-                            pthread_mutex_unlock(&pending_mutex);
                         }
+                        pthread_mutex_unlock(&pending_mutex);
                         
                         /* Petit délai entre chaque propriété */
                         usleep(50000);  /* 50ms */
@@ -4799,6 +4830,8 @@ static int handle_client_readprop(json_t *root)
     const char *obj_str;
     const char *prop_str;
     
+    cleanup_old_requests();
+
     cmd_obj = json_object_get(root, "cmd");
     req = NULL;
     
@@ -5095,6 +5128,8 @@ static int handle_client_writeprop(json_t *root)
     int bytes_sent;
     BACNET_WRITE_PROPERTY_DATA wp_data;
     BACNET_NPDU_DATA npdu_data;
+    
+    cleanup_old_requests();
     
     cmd_obj = json_object_get(root, "cmd");
     req = NULL;
