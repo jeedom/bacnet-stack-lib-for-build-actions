@@ -20,6 +20,7 @@
 #include "bacnet/rp.h"
 #include "bacnet/bacapp.h"
 #include "bacnet/bacdcode.h"
+#include "bacnet/datetime.h"
 #include "trendlog_override.h"
 
 /**
@@ -524,7 +525,7 @@ int rr_trend_log_encode(
         
         /* timestamp [0] */
         TL_Local_Time_To_BAC(&TempTime, rec->tTimeStamp);
-        iLen += encode_context_datetime(&apdu[iLen], 0, &TempTime);
+        iLen += bacapp_encode_context_datetime(&apdu[iLen], 0, &TempTime);
         
         /* logData [1] - choice */
         iLen += encode_opening_tag(&apdu[iLen], 1);
