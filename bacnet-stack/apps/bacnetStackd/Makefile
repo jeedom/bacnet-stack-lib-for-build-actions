@@ -67,10 +67,13 @@ CFLAGS_COMMON := -std=gnu89 -Os -Wall -Wextra -pedantic \
                  -ffunction-sections -fdata-sections
 
 INCLUDES := -I$(BACNET_SRC_DIR) -I$(PORTS_LINUX) -I$(PORTS_POSIX) \
-            -I$(BACNET_ROOT) -I$(BACNET_ROOT)/include
+            -I$(BACNET_ROOT) -I$(BACNET_ROOT)/include \
+            -I.
 
 CFLAGS := $(CFLAGS_COMMON) $(INCLUDES) $(PFLAGS)
+
 LDFLAGS := -Wl,--gc-sections -Wl,--allow-multiple-definition $(LFLAGS)
+
 LDLIBS := $(BACNET_LIB_TARGET) -ljansson -lcurl -lpthread
 
 # Objects
@@ -79,20 +82,24 @@ OBJS := $(SRC:.c=.o)
 .PHONY: all clean
 
 all: $(BACNET_LIB_TARGET) $(TARGET_BIN)
-OBJS_ORDERED := bacnetStackd.o \
-                trendlog_override.o \
-                datetime-init.o \
-                $(filter-out trendlog_override.o bacnetStackd.o datetime-init.o,$(OBJS))
+
+# Ordre de linkage: trendlog_override.o en PREMIER
 $(TARGET_BIN): $(OBJS) $(BACNET_LIB_TARGET)
-	$(CC) $(PFLAGS) $(OBJS) $(LFLAGS) $(LDLIBS) -o $@
+	@echo "=== Linking with override priority ==="
+	$(CC) $(LDFLAGS) \
+		bacnetStackd.o \
+		trendlog_override.o \
+		$(filter-out bacnetStackd.o trendlog_override.o,$(OBJS)) \
+		$(LDLIBS) \
+		-o $@
 	@echo "Build complete: $@"
-      @echo "=== Verifying symbol override ==="
-      @nm $@ | grep "rr_trend_log_encode" || true
+	@echo "=== Verifying rr_trend_log_encode override ==="
+	@nm $@ | grep " T rr_trend_log_encode" || echo "Warning: Symbol not found"
 	@size $@ 2>/dev/null || true
 
 $(BACNET_LIB_TARGET):
 	@echo "Building BACnet library..."
-	( cd $(BACNET_LIB_DIR) ; $(MAKE) clean ; $(MAKE) -s DEFINES="-DMAX_SCHEDULES=10 -DMAX_TREND_LOGS=50"  )
+	( cd $(BACNET_LIB_DIR) ; $(MAKE) clean ; $(MAKE) -s DEFINES="-DMAX_SCHEDULES=10 -DMAX_TREND_LOGS=50" )
 
 .c.o:
 	$(CC) -c $(CFLAGS) $< -o $@
