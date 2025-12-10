@@ -4058,7 +4058,6 @@ static void client_read_property_multiple_ack_handler(
                 const char *prop_name = bactext_property_name(rpm_property->propertyIdentifier);
                 json_object_set_new(prop_obj, "property", json_string(prop_name));
                 
-                /* === CORRECTION: rpm_property->value est déjà un BACNET_APPLICATION_DATA_VALUE* === */
                 app_value = rpm_property->value;
                 
                 if (app_value) {
@@ -4105,8 +4104,27 @@ static void client_read_property_multiple_ack_handler(
             current_object = current_object->next;
         }
         
-        /* Libérer la mémoire allouée par rpm_ack_decode_service_request */
-        rpm_ack_free_data(rpm_data);
+        /* === CORRECTION: Libération manuelle au lieu de rpm_ack_free_data === */
+        /* La structure rpm_data doit être libérée manuellement */
+        while (rpm_data) {
+            BACNET_READ_ACCESS_DATA *next_obj = rpm_data->next;
+            
+            /* Libérer la liste de propriétés */
+            while (rpm_data->listOfProperties) {
+                BACNET_PROPERTY_REFERENCE *next_prop = rpm_data->listOfProperties->next;
+                
+                /* Libérer la valeur si allouée */
+                if (rpm_data->listOfProperties->value) {
+                    free(rpm_data->listOfProperties->value);
+                }
+                
+                free(rpm_data->listOfProperties);
+                rpm_data->listOfProperties = next_prop;
+            }
+            
+            free(rpm_data);
+            rpm_data = next_obj;
+        }
     }
     
     json_object_set_new(result, "properties", properties_array);
