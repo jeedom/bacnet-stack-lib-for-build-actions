@@ -256,6 +256,10 @@ void Trendlog_Fix_Timestamps(void)
  * @brief Encode ReadRange response for Trend Log with proper time filtering
  * @note Cette fonction remplace la version buguée du BACnet Stack
  */
+/**
+ * @brief Encode ReadRange response for Trend Log with proper time filtering
+ * @note Cette fonction remplace la version buguée du BACnet Stack
+ */
 int rr_trend_log_encode(
     uint8_t *apdu,
     BACNET_READ_RANGE_DATA *pRequest)
@@ -308,6 +312,12 @@ int rr_trend_log_encode(
         return iLen;
     }
     
+    /* === Fonction helper pour convertir index logique -> buffer index === */
+    #define LOGICAL_TO_BUFFER_INDEX(logical_idx) \
+        ((info->ulRecordCount < TL_MAX_ENTRIES) ? \
+            (logical_idx) : \
+            ((info->iIndex - info->ulRecordCount + (logical_idx) + TL_MAX_ENTRIES) % TL_MAX_ENTRIES))
+    
     /* === Déterminer la plage selon le type de requête === */
     switch (pRequest->RequestType) {
         case RR_BY_POSITION:
@@ -349,6 +359,7 @@ int rr_trend_log_encode(
                 bacnet_time_t ref_seconds;
                 int found_start = -1;
                 int found_end = -1;
+                int buffer_idx;
                 
                 /* Convertir le timestamp BACnet en time_t */
                 ref_seconds = datetime_seconds_since_epoch(&pRequest->Range.RefTime);
@@ -367,21 +378,24 @@ int rr_trend_log_encode(
                     
                     /* Parcourir de la fin vers le début */
                     for (i = (int32_t)info->ulRecordCount - 1; i >= 0; i--) {
-                        /* ===  UTILISER L'API PUBLIQUE === */
-                        rec = Trend_Log_Get_Record(instance, i);
+                        /* ===  CONVERTIR INDEX LOGIQUE → BUFFER === */
+                        buffer_idx = LOGICAL_TO_BUFFER_INDEX(i);
+                        rec = Trend_Log_Get_Record(instance, buffer_idx);
                         if (!rec) continue;
                         
                         /* Comparer le timestamp */
                         if (rec->tTimeStamp <= ref_time) {
                             if (found_end == -1) {
                                 found_end = i;
-                                printf("  Found end at index %d (timestamp: %s", i, ctime(&rec->tTimeStamp));
+                                printf("  Found end at logical index %d (buffer=%d, timestamp: %s", 
+                                       i, buffer_idx, ctime(&rec->tTimeStamp));
                             }
                             found_start = i;
                             
                             /* Arrêter quand on a assez d'enregistrements */
                             if (found_end - found_start + 1 >= count) {
-                                printf("  Found start at index %d (got %d records)\n", i, count);
+                                printf("  Found start at logical index %d (buffer=%d, got %d records)\n", 
+                                       i, buffer_idx, count);
                                 break;
                             }
                         }
@@ -394,20 +408,23 @@ int rr_trend_log_encode(
                     
                     /* Parcourir du début vers la fin */
                     for (i = 0; i < (int32_t)info->ulRecordCount; i++) {
-                        /* ===  UTILISER L'API PUBLIQUE === */
-                        rec = Trend_Log_Get_Record(instance, i);
+                        /* ===  CONVERTIR INDEX LOGIQUE → BUFFER === */
+                        buffer_idx = LOGICAL_TO_BUFFER_INDEX(i);
+                        rec = Trend_Log_Get_Record(instance, buffer_idx);
                         if (!rec) continue;
                         
                         /* Comparer le timestamp */
                         if (rec->tTimeStamp >= ref_time) {
                             if (found_start == -1) {
                                 found_start = i;
-                                printf("  Found start at index %d (timestamp: %s", i, ctime(&rec->tTimeStamp));
+                                printf("  Found start at logical index %d (buffer=%d, timestamp: %s", 
+                                       i, buffer_idx, ctime(&rec->tTimeStamp));
                             }
                             found_end = i;
                             
                             if (found_end - found_start + 1 >= count) {
-                                printf("  Found end at index %d (got %d records)\n", i, count);
+                                printf("  Found end at logical index %d (buffer=%d, got %d records)\n", 
+                                       i, buffer_idx, count);
                                 break;
                             }
                         }
@@ -439,7 +456,7 @@ int rr_trend_log_encode(
                 log_index = found_start;
                 count = found_end - found_start + 1;
                 
-                printf("  ✓ Returning %d records (index %d to %d)\n", count, found_start, found_end);
+                printf("  ✓ Returning %d records (logical index %d to %d)\n", count, found_start, found_end);
             }
             break;
             
@@ -513,10 +530,13 @@ int rr_trend_log_encode(
     for (i = 0; i < count; i++) {
         j = log_index + i;
         
-        /* ===  UTILISER L'API PUBLIQUE === */
-        rec = Trend_Log_Get_Record(instance, j);
+        /* ===  CONVERTIR INDEX LOGIQUE → BUFFER === */
+        int buffer_idx = LOGICAL_TO_BUFFER_INDEX(j);
+        rec = Trend_Log_Get_Record(instance, buffer_idx);
+        
         if (!rec) {
-            printf("[READRANGE] TL[%u]: Failed to get record %d\n", instance, j);
+            printf("[READRANGE] TL[%u]: Failed to get record at logical=%d, buffer=%d\n", 
+                   instance, j, buffer_idx);
             continue;
         }
         

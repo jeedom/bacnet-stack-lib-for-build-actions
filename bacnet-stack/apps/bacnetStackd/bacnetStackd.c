@@ -4015,14 +4015,109 @@ static void client_read_property_multiple_ack_handler(
     BACNET_ADDRESS *src,
     BACNET_CONFIRMED_SERVICE_ACK_DATA *service_data)
 {
-    /* Simplified RPM handler */
-    (void)service_request;
-    (void)service_len;
+    BACNET_READ_ACCESS_DATA *rpm_data;
+    BACNET_PROPERTY_REFERENCE *rpm_property;
+    BACNET_APPLICATION_DATA_VALUE value;
+    json_t *response;
+    json_t *result;
+    json_t *properties_array;
+    char value_str[256];
+    char *json_str;
+    int len;
+    uint8_t *apdu;
+    uint32_t apdu_len;
+    
     (void)src;
     
-    char *json = client_create_success_response("RPM-ACK received");
-    complete_request(service_data->invoke_id, json, false);
-    free(json);
+    printf("[CLIENT] ReadPropertyMultiple-ACK received (invoke_id=%u)\n", 
+           service_data->invoke_id);
+    fflush(stdout);
+    
+    response = json_object();
+    json_object_set_new(response, "status", json_string("success"));
+    json_object_set_new(response, "service", json_string("ReadPropertyMultiple"));
+    
+    result = json_object();
+    properties_array = json_array();
+    
+    /* Décoder la réponse RPM */
+    len = rpm_ack_decode_service_request(service_request, service_len, &rpm_data);
+    
+    if (len > 0 && rpm_data) {
+        /* Parcourir les objets retournés */
+        BACNET_READ_ACCESS_DATA *current_object = rpm_data;
+        while (current_object) {
+            printf("[CLIENT]   Object: %s:%u\n", 
+                   bactext_object_type_name(current_object->object_type),
+                   current_object->object_instance);
+            fflush(stdout);
+            
+            /* Parcourir les propriétés de cet objet */
+            rpm_property = current_object->listOfProperties;
+            while (rpm_property) {
+                json_t *prop_obj = json_object();
+                
+                const char *prop_name = bactext_property_name(rpm_property->propertyIdentifier);
+                json_object_set_new(prop_obj, "property", json_string(prop_name));
+                
+                /* Décoder la valeur */
+                if (rpm_property->value.application_data_len > 0) {
+                    apdu = rpm_property->value.application_data;
+                    apdu_len = rpm_property->value.application_data_len;
+                    
+                    len = bacapp_decode_application_data(apdu, apdu_len, &value);
+                    
+                    if (len > 0) {
+                        /* Formater selon le type */
+                        switch (value.tag) {
+                            case BACNET_APPLICATION_TAG_REAL:
+                                snprintf(value_str, sizeof(value_str), "%.2f", value.type.Real);
+                                break;
+                            case BACNET_APPLICATION_TAG_UNSIGNED_INT:
+                                snprintf(value_str, sizeof(value_str), "%u", 
+                                        (unsigned int)value.type.Unsigned_Int);
+                                break;
+                            case BACNET_APPLICATION_TAG_BOOLEAN:
+                                snprintf(value_str, sizeof(value_str), "%s",
+                                        value.type.Boolean ? "true" : "false");
+                                break;
+                            case BACNET_APPLICATION_TAG_ENUMERATED:
+                                snprintf(value_str, sizeof(value_str), "%u",
+                                        (unsigned int)value.type.Enumerated);
+                                break;
+                            case BACNET_APPLICATION_TAG_CHARACTER_STRING:
+                                characterstring_ansi_copy(value_str, sizeof(value_str),
+                                                        &value.type.Character_String);
+                                break;
+                            default:
+                                snprintf(value_str, sizeof(value_str), "(tag %d)", value.tag);
+                                break;
+                        }
+                        
+                        json_object_set_new(prop_obj, "value", json_string(value_str));
+                        printf("[CLIENT]     %s = %s\n", prop_name, value_str);
+                        fflush(stdout);
+                    }
+                }
+                
+                json_array_append_new(properties_array, prop_obj);
+                rpm_property = rpm_property->next;
+            }
+            
+            current_object = current_object->next;
+        }
+        
+        /* Libérer la mémoire allouée par rpm_ack_decode_service_request */
+        rpm_ack_free_data(rpm_data);
+    }
+    
+    json_object_set_new(result, "properties", properties_array);
+    json_object_set_new(response, "result", result);
+    
+    json_str = json_dumps(response, JSON_COMPACT);
+    complete_request(service_data->invoke_id, json_str, false);
+    free(json_str);
+    json_decref(response);
 }
 
 static void client_read_range_ack_handler(
@@ -4535,220 +4630,278 @@ static int handle_client_objectlist(json_t *root)
                 fflush(stdout);
                 
                 /* Pour chaque objet */
-                for (i = 0; i < obj_count; i++) {
-                    obj = json_array_get(objects_array, i);
-                    if (!obj) continue;
-                    
-                    type_obj = json_object_get(obj, "type");
-                    instance_obj = json_object_get(obj, "instance");
-                    
-                    if (!type_obj || !instance_obj) continue;
-                    
-                    type_str = json_string_value(type_obj);
-                    instance = json_integer_value(instance_obj);
-                    
-                    /* Convertir le type string en BACNET_OBJECT_TYPE */
-                    obj_type = OBJECT_ANALOG_INPUT;  /* default */
-                    
-                    if (strcmp(type_str, "analog-input") == 0) obj_type = OBJECT_ANALOG_INPUT;
-                    else if (strcmp(type_str, "analog-output") == 0) obj_type = OBJECT_ANALOG_OUTPUT;
-                    else if (strcmp(type_str, "analog-value") == 0) obj_type = OBJECT_ANALOG_VALUE;
-                    else if (strcmp(type_str, "binary-input") == 0) obj_type = OBJECT_BINARY_INPUT;
-                    else if (strcmp(type_str, "binary-output") == 0) obj_type = OBJECT_BINARY_OUTPUT;
-                    else if (strcmp(type_str, "binary-value") == 0) obj_type = OBJECT_BINARY_VALUE;
-                    else if (strcmp(type_str, "multi-state-input") == 0) obj_type = OBJECT_MULTI_STATE_INPUT;
-                    else if (strcmp(type_str, "multi-state-output") == 0) obj_type = OBJECT_MULTI_STATE_OUTPUT;
-                    else if (strcmp(type_str, "multi-state-value") == 0) obj_type = OBJECT_MULTI_STATE_VALUE;
-                    else if (strcmp(type_str, "device") == 0) obj_type = OBJECT_DEVICE;
-                    else {
-                        printf("[CLIENT] Skipping unsupported type: %s\n", type_str);
-                        fflush(stdout);
-                        continue;
+/* Pour chaque objet */
+for (i = 0; i < obj_count; i++) {
+    obj = json_array_get(objects_array, i);
+    if (!obj) continue;
+    
+    type_obj = json_object_get(obj, "type");
+    instance_obj = json_object_get(obj, "instance");
+    
+    if (!type_obj || !instance_obj) continue;
+    
+    type_str = json_string_value(type_obj);
+    instance = json_integer_value(instance_obj);
+    
+    /* Convertir le type string en BACNET_OBJECT_TYPE */
+    obj_type = OBJECT_ANALOG_INPUT;  /* default */
+    
+    if (strcmp(type_str, "analog-input") == 0) obj_type = OBJECT_ANALOG_INPUT;
+    else if (strcmp(type_str, "analog-output") == 0) obj_type = OBJECT_ANALOG_OUTPUT;
+    else if (strcmp(type_str, "analog-value") == 0) obj_type = OBJECT_ANALOG_VALUE;
+    else if (strcmp(type_str, "binary-input") == 0) obj_type = OBJECT_BINARY_INPUT;
+    else if (strcmp(type_str, "binary-output") == 0) obj_type = OBJECT_BINARY_OUTPUT;
+    else if (strcmp(type_str, "binary-value") == 0) obj_type = OBJECT_BINARY_VALUE;
+    else if (strcmp(type_str, "multi-state-input") == 0) obj_type = OBJECT_MULTI_STATE_INPUT;
+    else if (strcmp(type_str, "multi-state-output") == 0) obj_type = OBJECT_MULTI_STATE_OUTPUT;
+    else if (strcmp(type_str, "multi-state-value") == 0) obj_type = OBJECT_MULTI_STATE_VALUE;
+    else if (strcmp(type_str, "device") == 0) obj_type = OBJECT_DEVICE;
+    else {
+        printf("[CLIENT] Skipping unsupported type: %s\n", type_str);
+        fflush(stdout);
+        continue;
+    }
+    
+    printf("[CLIENT] [%zu/%zu] Reading properties for %s:%u...\n", 
+           i + 1, obj_count, type_str, instance);
+    fflush(stdout);
+    
+    /* ═══════════════════════════════════════════════════════════════
+     * NOUVELLE APPROCHE: Utiliser ReadPropertyMultiple (RPM)
+     * ═══════════════════════════════════════════════════════════════ */
+    
+    /* Construire la liste des propriétés à lire */
+    BACNET_PROPERTY_REFERENCE property_list[10];
+    int rpm_prop_count = 0;
+    
+    /* Propriétés communes */
+    property_list[rpm_prop_count].propertyIdentifier = PROP_OBJECT_NAME;
+    property_list[rpm_prop_count].propertyArrayIndex = BACNET_ARRAY_ALL;
+    rpm_prop_count++;
+    
+    property_list[rpm_prop_count].propertyIdentifier = PROP_DESCRIPTION;
+    property_list[rpm_prop_count].propertyArrayIndex = BACNET_ARRAY_ALL;
+    rpm_prop_count++;
+    
+    /* Propriétés spécifiques selon le type */
+    switch (obj_type) {
+        case OBJECT_ANALOG_INPUT:
+        case OBJECT_ANALOG_OUTPUT:
+        case OBJECT_ANALOG_VALUE:
+            property_list[rpm_prop_count].propertyIdentifier = PROP_PRESENT_VALUE;
+            property_list[rpm_prop_count].propertyArrayIndex = BACNET_ARRAY_ALL;
+            rpm_prop_count++;
+            
+            property_list[rpm_prop_count].propertyIdentifier = PROP_UNITS;
+            property_list[rpm_prop_count].propertyArrayIndex = BACNET_ARRAY_ALL;
+            rpm_prop_count++;
+            
+            property_list[rpm_prop_count].propertyIdentifier = PROP_OUT_OF_SERVICE;
+            property_list[rpm_prop_count].propertyArrayIndex = BACNET_ARRAY_ALL;
+            rpm_prop_count++;
+            
+            property_list[rpm_prop_count].propertyIdentifier = PROP_STATUS_FLAGS;
+            property_list[rpm_prop_count].propertyArrayIndex = BACNET_ARRAY_ALL;
+            rpm_prop_count++;
+            break;
+            
+        case OBJECT_BINARY_INPUT:
+        case OBJECT_BINARY_OUTPUT:
+        case OBJECT_BINARY_VALUE:
+            property_list[rpm_prop_count].propertyIdentifier = PROP_PRESENT_VALUE;
+            property_list[rpm_prop_count].propertyArrayIndex = BACNET_ARRAY_ALL;
+            rpm_prop_count++;
+            
+            property_list[rpm_prop_count].propertyIdentifier = PROP_OUT_OF_SERVICE;
+            property_list[rpm_prop_count].propertyArrayIndex = BACNET_ARRAY_ALL;
+            rpm_prop_count++;
+            
+            property_list[rpm_prop_count].propertyIdentifier = PROP_STATUS_FLAGS;
+            property_list[rpm_prop_count].propertyArrayIndex = BACNET_ARRAY_ALL;
+            rpm_prop_count++;
+            
+            property_list[rpm_prop_count].propertyIdentifier = PROP_INACTIVE_TEXT;
+            property_list[rpm_prop_count].propertyArrayIndex = BACNET_ARRAY_ALL;
+            rpm_prop_count++;
+            
+            property_list[rpm_prop_count].propertyIdentifier = PROP_ACTIVE_TEXT;
+            property_list[rpm_prop_count].propertyArrayIndex = BACNET_ARRAY_ALL;
+            rpm_prop_count++;
+            break;
+            
+        case OBJECT_MULTI_STATE_INPUT:
+        case OBJECT_MULTI_STATE_OUTPUT:
+        case OBJECT_MULTI_STATE_VALUE:
+            property_list[rpm_prop_count].propertyIdentifier = PROP_PRESENT_VALUE;
+            property_list[rpm_prop_count].propertyArrayIndex = BACNET_ARRAY_ALL;
+            rpm_prop_count++;
+            
+            property_list[rpm_prop_count].propertyIdentifier = PROP_OUT_OF_SERVICE;
+            property_list[rpm_prop_count].propertyArrayIndex = BACNET_ARRAY_ALL;
+            rpm_prop_count++;
+            
+            property_list[rpm_prop_count].propertyIdentifier = PROP_STATUS_FLAGS;
+            property_list[rpm_prop_count].propertyArrayIndex = BACNET_ARRAY_ALL;
+            rpm_prop_count++;
+            
+            property_list[rpm_prop_count].propertyIdentifier = PROP_STATE_TEXT;
+            property_list[rpm_prop_count].propertyArrayIndex = BACNET_ARRAY_ALL;
+            rpm_prop_count++;
+            break;
+            
+        case OBJECT_DEVICE:
+            /* Pour device, juste le nom suffit */
+            break;
+            
+        default:
+            break;
+    }
+    
+    /* Attendre qu'un invoke_id soit disponible */
+    int wait_attempts = 0;
+    while (wait_attempts < 100) {
+        prop_invoke_id = tsm_next_free_invokeID();
+        if (prop_invoke_id != 0) break;
+        
+        if (wait_attempts % 10 == 0) {
+            printf("[CLIENT]   ⏳ Waiting for free invoke_id...\n");
+            fflush(stdout);
+            cleanup_old_requests();
+        }
+        usleep(100000);
+        wait_attempts++;
+    }
+    
+    if (prop_invoke_id == 0) {
+        printf("[CLIENT]   ✗ No free invoke_id after 10s wait\n");
+        fflush(stdout);
+        continue;
+    }
+    
+    /* Allouer un slot */
+    prop_req = NULL;
+    pthread_mutex_lock(&pending_mutex);
+    for (k = 0; k < MAX_PENDING_REQUESTS; k++) {
+        if (pending_requests[k].invoke_id == 0) {
+            pending_requests[k].invoke_id = prop_invoke_id;
+            pending_requests[k].completed = false;
+            pending_requests[k].error = false;
+            pending_requests[k].response_json = NULL;
+            pending_requests[k].timestamp = time(NULL);
+            prop_req = &pending_requests[k];
+            break;
+        }
+    }
+    pthread_mutex_unlock(&pending_mutex);
+    
+    if (!prop_req) {
+        printf("[CLIENT]   ✗ No free slot\n");
+        fflush(stdout);
+        continue;
+    }
+    
+    /* ═══════════════════════════════════════════════════════════════
+     * Envoyer ReadPropertyMultiple pour TOUTES les propriétés en 1 coup
+     * ═══════════════════════════════════════════════════════════════ */
+    BACNET_READ_ACCESS_DATA read_access_data;
+    read_access_data.object_type = obj_type;
+    read_access_data.object_instance = instance;
+    read_access_data.listOfProperties = property_list;
+    read_access_data.next = NULL;
+    
+    sent_prop_invoke = Send_Read_Property_Multiple_Request_Address(
+        &target_addr,
+        1476,
+        &read_access_data
+    );
+    
+    if (sent_prop_invoke == 0) {
+        printf("[CLIENT]   ✗ Failed to send RPM request\n");
+        fflush(stdout);
+        pthread_mutex_lock(&pending_mutex);
+        memset(prop_req, 0, sizeof(PENDING_REQUEST));
+        pthread_mutex_unlock(&pending_mutex);
+        continue;
+    }
+    
+    printf("[CLIENT]   → Sent RPM request for %d properties (invoke_id=%u)\n", 
+           rpm_prop_count, sent_prop_invoke);
+    fflush(stdout);
+    
+    /* Attendre la réponse (timeout 5 secondes) */
+    prop_received = false;
+    for (prop_timeout = 0; prop_timeout < 50; prop_timeout++) {
+        usleep(100000);  /* 100ms */
+        
+        pthread_mutex_lock(&pending_mutex);
+        if (prop_req->completed) {
+            prop_received = true;
+            pthread_mutex_unlock(&pending_mutex);
+            break;
+        }
+        pthread_mutex_unlock(&pending_mutex);
+    }
+    
+    /* Traiter la réponse */
+    pthread_mutex_lock(&pending_mutex);
+    
+    if (prop_received && prop_req->response_json) {
+        printf("[CLIENT]   ✓ RPM response received\n");
+        fflush(stdout);
+        
+        /* Parser la réponse RPM */
+        prop_response = json_loads(prop_req->response_json, 0, &json_err);
+        
+        if (prop_response) {
+            /* Créer l'objet properties */
+            properties_obj = json_object();
+            
+            /* La réponse RPM contient un tableau de propriétés */
+            json_t *rpm_result = json_object_get(prop_response, "result");
+            if (rpm_result && json_is_object(rpm_result)) {
+                json_t *properties_array = json_object_get(rpm_result, "properties");
+                if (properties_array && json_is_array(properties_array)) {
+                    size_t prop_idx;
+                    for (prop_idx = 0; prop_idx < json_array_size(properties_array); prop_idx++) {
+                        json_t *prop_item = json_array_get(properties_array, prop_idx);
+                        json_t *prop_name_obj = json_object_get(prop_item, "property");
+                        json_t *prop_value_obj = json_object_get(prop_item, "value");
+                        
+                        if (prop_name_obj && prop_value_obj) {
+                            const char *prop_name = json_string_value(prop_name_obj);
+                            
+                            /* Créer un objet pour cette propriété */
+                            prop_data = json_object();
+                            json_object_set(prop_data, "value", prop_value_obj);
+                            
+                            json_object_set_new(properties_obj, prop_name, prop_data);
+                            
+                            printf("[CLIENT]     ✓ %s\n", prop_name);
+                            fflush(stdout);
+                        }
                     }
-                    
-                    printf("[CLIENT] [%zu/%zu] Reading properties for %s:%u...\n", 
-                           i + 1, obj_count, type_str, instance);
-                    fflush(stdout);
-                    
-                    /* Créer un objet JSON pour stocker les propriétés */
-                    properties_obj = json_object();
-                    
-                    /* Liste des propriétés à lire selon le type */
-                    prop_count = 0;
-                    
-                    /* Propriétés communes à tous les objets */
-                    properties_to_read[prop_count++] = PROP_OBJECT_NAME;
-                    properties_to_read[prop_count++] = PROP_DESCRIPTION;
-                    
-                    /* Propriétés spécifiques selon le type */
-                    switch (obj_type) {
-                        case OBJECT_ANALOG_INPUT:
-                        case OBJECT_ANALOG_OUTPUT:
-                        case OBJECT_ANALOG_VALUE:
-                            properties_to_read[prop_count++] = PROP_PRESENT_VALUE;
-                            properties_to_read[prop_count++] = PROP_UNITS;
-                            properties_to_read[prop_count++] = PROP_OUT_OF_SERVICE;
-                            properties_to_read[prop_count++] = PROP_STATUS_FLAGS;
-                            break;
-                            
-                        case OBJECT_BINARY_INPUT:
-                        case OBJECT_BINARY_OUTPUT:
-                        case OBJECT_BINARY_VALUE:
-                            properties_to_read[prop_count++] = PROP_PRESENT_VALUE;
-                            properties_to_read[prop_count++] = PROP_OUT_OF_SERVICE;
-                            properties_to_read[prop_count++] = PROP_STATUS_FLAGS;
-                            properties_to_read[prop_count++] = PROP_INACTIVE_TEXT;
-                            properties_to_read[prop_count++] = PROP_ACTIVE_TEXT;
-                            break;
-                            
-                        case OBJECT_MULTI_STATE_INPUT:
-                        case OBJECT_MULTI_STATE_OUTPUT:
-                        case OBJECT_MULTI_STATE_VALUE:
-                            properties_to_read[prop_count++] = PROP_PRESENT_VALUE;
-                            properties_to_read[prop_count++] = PROP_OUT_OF_SERVICE;
-                            properties_to_read[prop_count++] = PROP_STATUS_FLAGS;
-                            properties_to_read[prop_count++] = PROP_STATE_TEXT;
-                            break;
-                            
-                        case OBJECT_DEVICE:
-                            /* Pour device, on lit juste le nom */
-                            break;
-                            
-                        default:
-                            break;
-                    }
-                    
-                    /* Lire chaque propriété */
-                    for (j = 0; j < (size_t)prop_count; j++) {
-                        prop_id = properties_to_read[j];
-                        prop_name = bactext_property_name(prop_id);
-                        
-                        /* Obtenir un nouveau invoke_id */
-                        prop_invoke_id = tsm_next_free_invokeID();
-                        if (prop_invoke_id == 0) {
-                            printf("[CLIENT]   ✗ No free invoke_id for property %s\n", prop_name);
-                            fflush(stdout);
-                            continue;
-                        }
-                        
-                        /* Allouer un slot pour cette requête */
-                        prop_req = NULL;
-                        pthread_mutex_lock(&pending_mutex);
-                        for (k = 0; k < MAX_PENDING_REQUESTS; k++) {
-                            if (pending_requests[k].invoke_id == 0) {
-                                pending_requests[k].invoke_id = prop_invoke_id;
-                                pending_requests[k].completed = false;
-                                pending_requests[k].error = false;
-                                pending_requests[k].response_json = NULL;
-                                pending_requests[k].timestamp = time(NULL);
-                                prop_req = &pending_requests[k];
-                                break;
-                            }
-                        }
-                        pthread_mutex_unlock(&pending_mutex);
-                        
-                        if (!prop_req) {
-                            printf("[CLIENT]   ✗ No free slot for property %s\n", prop_name);
-                            fflush(stdout);
-                            continue;
-                        }
-                        
-                        /* Envoyer la requête ReadProperty */
-                        sent_prop_invoke = Send_Read_Property_Request_Address(
-                            &target_addr,
-                            1476,
-                            obj_type,
-                            instance,
-                            prop_id,
-                            BACNET_ARRAY_ALL
-                        );
-                        
-                        if (sent_prop_invoke == 0) {
-                            printf("[CLIENT]   ✗ Failed to send request for property %s\n", prop_name);
-                            fflush(stdout);
-                            pthread_mutex_lock(&pending_mutex);
-                            memset(prop_req, 0, sizeof(PENDING_REQUEST));
-                            pthread_mutex_unlock(&pending_mutex);
-                            continue;
-                        }
-                        
-                        /* Attendre la réponse (timeout court: 3 secondes) */
-                        prop_received = false;
-                        for (prop_timeout = 0; prop_timeout < 30; prop_timeout++) {
-                            usleep(100000);  /* 100ms */
-                            
-                            pthread_mutex_lock(&pending_mutex);
-                            if (prop_req->completed) {
-                                prop_received = true;
-                                pthread_mutex_unlock(&pending_mutex);
-                                break;
-                            }
-                            pthread_mutex_unlock(&pending_mutex);
-                        }
-                        pthread_mutex_lock(&pending_mutex);
-                        
-                        if (prop_received && prop_req->response_json) {
-                            /* Parser la réponse et extraire la valeur */
-                            prop_response = json_loads(prop_req->response_json, 0, &json_err);
-                            
-                            if (prop_response) {
-                                value_obj = json_object_get(prop_response, "value");
-                                unit_obj = json_object_get(prop_response, "unit");
-                                datatype_obj = json_object_get(prop_response, "datatype");
-                                
-                                /* Créer un objet pour cette propriété */
-                                prop_data = json_object();
-                                
-                                if (value_obj) {
-                                    json_object_set(prop_data, "value", value_obj);
-                                }
-                                if (unit_obj) {
-                                    json_object_set(prop_data, "unit", unit_obj);
-                                }
-                                if (datatype_obj) {
-                                    json_object_set(prop_data, "datatype", datatype_obj);
-                                }
-                                
-                                /* Ajouter à l'objet properties */
-                                json_object_set_new(properties_obj, prop_name, prop_data);
-                                
-                                printf("[CLIENT]   ✓ %s = ", prop_name);
-                                if (json_is_string(value_obj)) {
-                                    printf("\"%s\"\n", json_string_value(value_obj));
-                                } else if (json_is_number(value_obj)) {
-                                    printf("%.2f", json_number_value(value_obj));
-                                    if (unit_obj && json_is_string(unit_obj)) {
-                                        printf(" %s", json_string_value(unit_obj));
-                                    }
-                                    printf("\n");
-                                } else if (json_is_boolean(value_obj)) {
-                                    printf("%s\n", json_boolean_value(value_obj) ? "true" : "false");
-                                } else {
-                                    printf("(value)\n");
-                                }
-                                fflush(stdout);
-                                
-                                json_decref(prop_response);
-                            }
-                            
-                      
-                            free(prop_req->response_json);
-                            memset(prop_req, 0, sizeof(PENDING_REQUEST));
-                            
-                        } else {
-                            printf("[CLIENT]   ⚠️  Timeout reading property %s\n", prop_name);
-                            fflush(stdout);
-                            memset(prop_req, 0, sizeof(PENDING_REQUEST));
-                        }
-                        pthread_mutex_unlock(&pending_mutex);
-                        
-                        /* Petit délai entre chaque propriété */
-                        usleep(50000);  /* 50ms */
-                    }
-                    
-                    /* Ajouter l'objet properties à l'objet */
-                    json_object_set_new(obj, "properties", properties_obj);
                 }
+            }
+            
+            /* Ajouter à l'objet */
+            json_object_set_new(obj, "properties", properties_obj);
+            
+            json_decref(prop_response);
+        }
+        
+        free(prop_req->response_json);
+        memset(prop_req, 0, sizeof(PENDING_REQUEST));
+    } else {
+        printf("[CLIENT]   ⚠️  Timeout waiting for RPM response\n");
+        fflush(stdout);
+        memset(prop_req, 0, sizeof(PENDING_REQUEST));
+    }
+    
+    pthread_mutex_unlock(&pending_mutex);
+    
+    /* Petit délai entre chaque objet (100ms) */
+    usleep(100000);
+}
                 
                 printf("[CLIENT] ✓ Finished reading properties for %zu objects\n", obj_count);
                 fflush(stdout);
