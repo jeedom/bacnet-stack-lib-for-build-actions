@@ -4350,7 +4350,6 @@ static int handle_client_devicelist(json_t *root)
     return 0;
 }
 
-
 static int handle_client_objectlist(json_t *root)
 {
     json_t *cmd_obj;
@@ -4383,7 +4382,6 @@ static int handle_client_objectlist(json_t *root)
     const char *prop_name;
     uint8_t prop_invoke_id;
     PENDING_REQUEST *prop_req;
-    uint8_t sent_prop_invoke;
     bool prop_received;
     int prop_timeout;
     json_t *prop_response;
@@ -4682,7 +4680,7 @@ static int handle_client_objectlist(json_t *root)
                     fflush(stdout);
                     
                     /* ═══════════════════════════════════════════════════════════════
-                     * NOUVELLE APPROCHE: Utiliser ReadPropertyMultiple (RPM)
+                     * ENCODAGE MANUEL RPM
                      * ═══════════════════════════════════════════════════════════════ */
                     
                     /* Construire la liste des propriétés à lire */
@@ -4692,10 +4690,12 @@ static int handle_client_objectlist(json_t *root)
                     /* Propriétés communes */
                     property_list[rpm_prop_count].propertyIdentifier = PROP_OBJECT_NAME;
                     property_list[rpm_prop_count].propertyArrayIndex = BACNET_ARRAY_ALL;
+                    property_list[rpm_prop_count].next = (rpm_prop_count < 9) ? &property_list[rpm_prop_count + 1] : NULL;
                     rpm_prop_count++;
                     
                     property_list[rpm_prop_count].propertyIdentifier = PROP_DESCRIPTION;
                     property_list[rpm_prop_count].propertyArrayIndex = BACNET_ARRAY_ALL;
+                    property_list[rpm_prop_count].next = (rpm_prop_count < 9) ? &property_list[rpm_prop_count + 1] : NULL;
                     rpm_prop_count++;
                     
                     /* Propriétés spécifiques selon le type */
@@ -4705,18 +4705,22 @@ static int handle_client_objectlist(json_t *root)
                         case OBJECT_ANALOG_VALUE:
                             property_list[rpm_prop_count].propertyIdentifier = PROP_PRESENT_VALUE;
                             property_list[rpm_prop_count].propertyArrayIndex = BACNET_ARRAY_ALL;
+                            property_list[rpm_prop_count].next = (rpm_prop_count < 9) ? &property_list[rpm_prop_count + 1] : NULL;
                             rpm_prop_count++;
                             
                             property_list[rpm_prop_count].propertyIdentifier = PROP_UNITS;
                             property_list[rpm_prop_count].propertyArrayIndex = BACNET_ARRAY_ALL;
+                            property_list[rpm_prop_count].next = (rpm_prop_count < 9) ? &property_list[rpm_prop_count + 1] : NULL;
                             rpm_prop_count++;
                             
                             property_list[rpm_prop_count].propertyIdentifier = PROP_OUT_OF_SERVICE;
                             property_list[rpm_prop_count].propertyArrayIndex = BACNET_ARRAY_ALL;
+                            property_list[rpm_prop_count].next = (rpm_prop_count < 9) ? &property_list[rpm_prop_count + 1] : NULL;
                             rpm_prop_count++;
                             
                             property_list[rpm_prop_count].propertyIdentifier = PROP_STATUS_FLAGS;
                             property_list[rpm_prop_count].propertyArrayIndex = BACNET_ARRAY_ALL;
+                            property_list[rpm_prop_count].next = NULL;
                             rpm_prop_count++;
                             break;
                             
@@ -4725,22 +4729,27 @@ static int handle_client_objectlist(json_t *root)
                         case OBJECT_BINARY_VALUE:
                             property_list[rpm_prop_count].propertyIdentifier = PROP_PRESENT_VALUE;
                             property_list[rpm_prop_count].propertyArrayIndex = BACNET_ARRAY_ALL;
+                            property_list[rpm_prop_count].next = (rpm_prop_count < 9) ? &property_list[rpm_prop_count + 1] : NULL;
                             rpm_prop_count++;
                             
                             property_list[rpm_prop_count].propertyIdentifier = PROP_OUT_OF_SERVICE;
                             property_list[rpm_prop_count].propertyArrayIndex = BACNET_ARRAY_ALL;
+                            property_list[rpm_prop_count].next = (rpm_prop_count < 9) ? &property_list[rpm_prop_count + 1] : NULL;
                             rpm_prop_count++;
                             
                             property_list[rpm_prop_count].propertyIdentifier = PROP_STATUS_FLAGS;
                             property_list[rpm_prop_count].propertyArrayIndex = BACNET_ARRAY_ALL;
+                            property_list[rpm_prop_count].next = (rpm_prop_count < 9) ? &property_list[rpm_prop_count + 1] : NULL;
                             rpm_prop_count++;
                             
                             property_list[rpm_prop_count].propertyIdentifier = PROP_INACTIVE_TEXT;
                             property_list[rpm_prop_count].propertyArrayIndex = BACNET_ARRAY_ALL;
+                            property_list[rpm_prop_count].next = (rpm_prop_count < 9) ? &property_list[rpm_prop_count + 1] : NULL;
                             rpm_prop_count++;
                             
                             property_list[rpm_prop_count].propertyIdentifier = PROP_ACTIVE_TEXT;
                             property_list[rpm_prop_count].propertyArrayIndex = BACNET_ARRAY_ALL;
+                            property_list[rpm_prop_count].next = NULL;
                             rpm_prop_count++;
                             break;
                             
@@ -4749,26 +4758,32 @@ static int handle_client_objectlist(json_t *root)
                         case OBJECT_MULTI_STATE_VALUE:
                             property_list[rpm_prop_count].propertyIdentifier = PROP_PRESENT_VALUE;
                             property_list[rpm_prop_count].propertyArrayIndex = BACNET_ARRAY_ALL;
+                            property_list[rpm_prop_count].next = (rpm_prop_count < 9) ? &property_list[rpm_prop_count + 1] : NULL;
                             rpm_prop_count++;
                             
                             property_list[rpm_prop_count].propertyIdentifier = PROP_OUT_OF_SERVICE;
                             property_list[rpm_prop_count].propertyArrayIndex = BACNET_ARRAY_ALL;
+                            property_list[rpm_prop_count].next = (rpm_prop_count < 9) ? &property_list[rpm_prop_count + 1] : NULL;
                             rpm_prop_count++;
                             
                             property_list[rpm_prop_count].propertyIdentifier = PROP_STATUS_FLAGS;
                             property_list[rpm_prop_count].propertyArrayIndex = BACNET_ARRAY_ALL;
+                            property_list[rpm_prop_count].next = (rpm_prop_count < 9) ? &property_list[rpm_prop_count + 1] : NULL;
                             rpm_prop_count++;
                             
                             property_list[rpm_prop_count].propertyIdentifier = PROP_STATE_TEXT;
                             property_list[rpm_prop_count].propertyArrayIndex = BACNET_ARRAY_ALL;
+                            property_list[rpm_prop_count].next = NULL;
                             rpm_prop_count++;
                             break;
                             
                         case OBJECT_DEVICE:
                             /* Pour device, juste le nom suffit */
+                            property_list[rpm_prop_count - 1].next = NULL;
                             break;
                             
                         default:
+                            property_list[rpm_prop_count - 1].next = NULL;
                             break;
                     }
                     
@@ -4816,7 +4831,7 @@ static int handle_client_objectlist(json_t *root)
                     }
                     
                     /* ═══════════════════════════════════════════════════════════════
-                     * Envoyer ReadPropertyMultiple pour TOUTES les propriétés en 1 coup
+                     * Envoyer ReadPropertyMultiple - ENCODAGE MANUEL
                      * ═══════════════════════════════════════════════════════════════ */
                     BACNET_READ_ACCESS_DATA read_access_data;
                     read_access_data.object_type = obj_type;
@@ -4824,14 +4839,21 @@ static int handle_client_objectlist(json_t *root)
                     read_access_data.listOfProperties = property_list;
                     read_access_data.next = NULL;
                     
-                    sent_prop_invoke = Send_Read_Property_Multiple_Request_Address(
-                        &target_addr,
-                        1476,
-                        &read_access_data
-                    );
+                    /* Encodage manuel RPM (car Send_Read_Property_Multiple_Request_Address n'existe pas) */
+                    uint8_t Tx_Buf[MAX_MPDU];
+                    BACNET_NPDU_DATA npdu_data;
+                    int pdu_len;
+                    int bytes_sent;
                     
-                    if (sent_prop_invoke == 0) {
-                        printf("[CLIENT]   ✗ Failed to send RPM request\n");
+                    /* Encoder NPDU */
+                    npdu_encode_npdu_data(&npdu_data, true, MESSAGE_PRIORITY_NORMAL);
+                    pdu_len = npdu_encode_pdu(&Tx_Buf[0], &target_addr, NULL, &npdu_data);
+                    
+                    /* Encoder RPM APDU */
+                    pdu_len += rpm_encode_apdu(&Tx_Buf[pdu_len], MAX_MPDU - pdu_len, prop_invoke_id, &read_access_data);
+                    
+                    if (pdu_len <= 0 || pdu_len > MAX_MPDU) {
+                        printf("[CLIENT]   ✗ Failed to encode RPM request (pdu_len=%d)\n", pdu_len);
                         fflush(stdout);
                         pthread_mutex_lock(&pending_mutex);
                         memset(prop_req, 0, sizeof(PENDING_REQUEST));
@@ -4839,8 +4861,27 @@ static int handle_client_objectlist(json_t *root)
                         continue;
                     }
                     
-                    printf("[CLIENT]   → Sent RPM request for %d properties (invoke_id=%u)\n", 
-                           rpm_prop_count, sent_prop_invoke);
+                    /* Enregistrer la transaction TSM */
+                    tsm_set_confirmed_unsegmented_transaction(prop_invoke_id, &target_addr, 
+                                                             &npdu_data, &Tx_Buf[0], pdu_len);
+                    
+                    /* Envoyer le packet */
+                    bytes_sent = datalink_send_pdu(&target_addr, &npdu_data, &Tx_Buf[0], pdu_len);
+                    
+                    if (bytes_sent <= 0) {
+                        printf("[CLIENT]   ✗ Failed to send RPM request (datalink error)\n");
+                        fflush(stdout);
+                        
+                        tsm_free_invoke_id(prop_invoke_id);
+                        
+                        pthread_mutex_lock(&pending_mutex);
+                        memset(prop_req, 0, sizeof(PENDING_REQUEST));
+                        pthread_mutex_unlock(&pending_mutex);
+                        continue;
+                    }
+                    
+                    printf("[CLIENT]   → Sent RPM request for %d properties (invoke_id=%u, %d bytes)\n", 
+                           rpm_prop_count, prop_invoke_id, bytes_sent);
                     fflush(stdout);
                     
                     /* Attendre la réponse (timeout 5 secondes) */
