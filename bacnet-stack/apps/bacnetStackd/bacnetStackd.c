@@ -4024,8 +4024,6 @@ static void client_read_property_multiple_ack_handler(
     char value_str[256];
     char *json_str;
     int len;
-    uint8_t *apdu;
-    uint32_t apdu_len;
     
     (void)src;
     
@@ -4060,43 +4058,50 @@ static void client_read_property_multiple_ack_handler(
                 const char *prop_name = bactext_property_name(rpm_property->propertyIdentifier);
                 json_object_set_new(prop_obj, "property", json_string(prop_name));
                 
-                /* Décoder la valeur - CORRECTION ICI */
-                if (rpm_property->value && rpm_property->value->application_data_len > 0) {
-                    apdu = rpm_property->value->application_data;
-                    apdu_len = rpm_property->value->application_data_len;
+                /* === CORRECTION: Accès correct aux données === */
+                /* rpm_property->value contient les données encodées dans un BACNET_PROPERTY_VALUE */
+                if (rpm_property->value) {
+                    BACNET_PROPERTY_VALUE *prop_value = rpm_property->value;
                     
-                    len = bacapp_decode_application_data(apdu, apdu_len, &value);
-                    
-                    if (len > 0) {
-                        /* Formater selon le type */
-                        switch (value.tag) {
-                            case BACNET_APPLICATION_TAG_REAL:
-                                snprintf(value_str, sizeof(value_str), "%.2f", value.type.Real);
-                                break;
-                            case BACNET_APPLICATION_TAG_UNSIGNED_INT:
-                                snprintf(value_str, sizeof(value_str), "%u", 
-                                        (unsigned int)value.type.Unsigned_Int);
-                                break;
-                            case BACNET_APPLICATION_TAG_BOOLEAN:
-                                snprintf(value_str, sizeof(value_str), "%s",
-                                        value.type.Boolean ? "true" : "false");
-                                break;
-                            case BACNET_APPLICATION_TAG_ENUMERATED:
-                                snprintf(value_str, sizeof(value_str), "%u",
-                                        (unsigned int)value.type.Enumerated);
-                                break;
-                            case BACNET_APPLICATION_TAG_CHARACTER_STRING:
-                                characterstring_ansi_copy(value_str, sizeof(value_str),
-                                                        &value.type.Character_String);
-                                break;
-                            default:
-                                snprintf(value_str, sizeof(value_str), "(tag %d)", value.tag);
-                                break;
-                        }
+                    /* Vérifier qu'il y a des données à décoder */
+                    if (prop_value->value) {
+                        /* Décoder la valeur depuis les données brutes */
+                        len = bacapp_decode_application_data(
+                            prop_value->value,
+                            MAX_APDU,
+                            &value);
                         
-                        json_object_set_new(prop_obj, "value", json_string(value_str));
-                        printf("[CLIENT]     %s = %s\n", prop_name, value_str);
-                        fflush(stdout);
+                        if (len > 0) {
+                            /* Formater selon le type */
+                            switch (value.tag) {
+                                case BACNET_APPLICATION_TAG_REAL:
+                                    snprintf(value_str, sizeof(value_str), "%.2f", value.type.Real);
+                                    break;
+                                case BACNET_APPLICATION_TAG_UNSIGNED_INT:
+                                    snprintf(value_str, sizeof(value_str), "%u", 
+                                            (unsigned int)value.type.Unsigned_Int);
+                                    break;
+                                case BACNET_APPLICATION_TAG_BOOLEAN:
+                                    snprintf(value_str, sizeof(value_str), "%s",
+                                            value.type.Boolean ? "true" : "false");
+                                    break;
+                                case BACNET_APPLICATION_TAG_ENUMERATED:
+                                    snprintf(value_str, sizeof(value_str), "%u",
+                                            (unsigned int)value.type.Enumerated);
+                                    break;
+                                case BACNET_APPLICATION_TAG_CHARACTER_STRING:
+                                    characterstring_ansi_copy(value_str, sizeof(value_str),
+                                                            &value.type.Character_String);
+                                    break;
+                                default:
+                                    snprintf(value_str, sizeof(value_str), "(tag %d)", value.tag);
+                                    break;
+                            }
+                            
+                            json_object_set_new(prop_obj, "value", json_string(value_str));
+                            printf("[CLIENT]     %s = %s\n", prop_name, value_str);
+                            fflush(stdout);
+                        }
                     }
                 }
                 
