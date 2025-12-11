@@ -192,7 +192,7 @@ static void Trend_Log_Init_Empty(void)
         log_info->Source.objectIdentifier.type = MAX_BACNET_OBJECT_TYPE;
         log_info->Source.objectIdentifier.instance = BACNET_MAX_INSTANCE;
         log_info->Source.propertyIdentifier = PROP_PRESENT_VALUE;
-        log_info->Source.arrayIndex = BACNET_ARRAY_ALL;
+        log_info->Source.arrayIndex = 0;  /* 0 instead of BACNET_ARRAY_ALL for YaBe compatibility */
         
         datetime_wildcard(&log_info->StartTime);
         datetime_wildcard(&log_info->StopTime);
@@ -858,7 +858,7 @@ static object_functions_t My_Object_Table[] = {
       Trend_Log_Index_To_Instance,
       Trend_Log_Valid_Instance,
       Trend_Log_Object_Name,
-      Trend_Log_Read_Property_Override,
+      Trend_Log_Read_Property_Override,  /* Use override to handle LOG_BUFFER array_index */
       Trend_Log_Write_Property,
       Trend_Log_Property_Lists,
       TrendLogGetRRInfo,
