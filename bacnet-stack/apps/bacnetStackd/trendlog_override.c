@@ -321,8 +321,17 @@ int rr_trend_log_encode(
             log_index = pRequest->Range.RefIndex;
             count = pRequest->Count;
             
+            /* Gérer les cas spéciaux d'index */
+            if (log_index == 0) {
+                /* RefIndex=0 signifie "depuis le début" en BACnet */
+                log_index = 1;
+                printf("[READRANGE] TL[%u]: RefIndex=0 converted to 1 (start)\n", instance);
+            }
+            
             /* Valider l'index (1-based dans BACnet) */
             if (log_index < 1 || log_index > (int32_t)info->ulRecordCount) {
+                printf("[READRANGE] TL[%u]: Invalid index %d (valid range: 1-%u)\n",
+                       instance, log_index, info->ulRecordCount);
                 pRequest->error_class = ERROR_CLASS_PROPERTY;
                 pRequest->error_code = ERROR_CODE_INVALID_ARRAY_INDEX;
                 return BACNET_STATUS_ERROR;
@@ -344,6 +353,9 @@ int rr_trend_log_encode(
                     count = info->ulRecordCount - log_index;
                 }
             }
+            
+            printf("[READRANGE] TL[%u]: After processing - log_index=%d, count=%d\n",
+                   instance, log_index, count);
             break;
             
         case RR_BY_TIME:
