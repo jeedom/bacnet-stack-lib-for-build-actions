@@ -252,6 +252,65 @@ void Trendlog_Fix_Timestamps(void)
         }
     }
 }
+
+/**
+ * @brief Override de Trend_Log_Read_Property pour gérer correctement LOG_BUFFER array_index
+ * 
+ * Cette fonction intercepte les lectures de propriété pour corriger le comportement
+ * de LOG_BUFFER quand array_index = BACNET_ARRAY_ALL (0).
+ * 
+ * En BACnet, quand on lit une propriété array avec array_index=0, on doit retourner
+ * la taille du tableau, pas une erreur READ_ACCESS_DENIED.
+ */
+int Trend_Log_Read_Property_Override(BACNET_READ_PROPERTY_DATA *rpdata)
+{
+    int apdu_len = 0;
+    TL_LOG_INFO *CurrentLog;
+    uint8_t *apdu = NULL;
+    
+    if ((rpdata == NULL) || (rpdata->application_data == NULL) ||
+        (rpdata->application_data_len == 0)) {
+        return 0;
+    }
+    
+    apdu = rpdata->application_data;
+    
+    /* Vérifier que l'instance est valide */
+    if (!Trend_Log_Valid_Instance(rpdata->object_instance)) {
+        rpdata->error_class = ERROR_CLASS_OBJECT;
+        rpdata->error_code = ERROR_CODE_UNKNOWN_OBJECT;
+        return BACNET_STATUS_ERROR;
+    }
+    
+    CurrentLog = Trend_Log_Get_Info(rpdata->object_instance);
+    if (!CurrentLog) {
+        rpdata->error_class = ERROR_CLASS_OBJECT;
+        rpdata->error_code = ERROR_CODE_UNKNOWN_OBJECT;
+        return BACNET_STATUS_ERROR;
+    }
+    
+    /* === GESTION SPÉCIALE POUR LOG_BUFFER === */
+    if (rpdata->object_property == PROP_LOG_BUFFER) {
+        if (rpdata->array_index == 0) {
+            /* array_index = 0 (BACNET_ARRAY_ALL) signifie "donne-moi la taille du tableau" */
+            printf("[READ_PROPERTY] TL[%u]: LOG_BUFFER array_index=0 → returning size %u\n",
+                   rpdata->object_instance, CurrentLog->ulRecordCount);
+            apdu_len = encode_application_unsigned(&apdu[0], CurrentLog->ulRecordCount);
+            return apdu_len;
+        } else {
+            /* Pour tous les autres index, LOG_BUFFER doit être lu via ReadRange */
+            printf("[READ_PROPERTY] TL[%u]: LOG_BUFFER array_index=%u → READ_ACCESS_DENIED (use ReadRange)\n",
+                   rpdata->object_instance, rpdata->array_index);
+            rpdata->error_class = ERROR_CLASS_PROPERTY;
+            rpdata->error_code = ERROR_CODE_READ_ACCESS_DENIED;
+            return BACNET_STATUS_ERROR;
+        }
+    }
+    
+    /* Pour toutes les autres propriétés, utiliser l'implémentation par défaut */
+    return Trend_Log_Read_Property(rpdata);
+}
+
 /**
  * @brief Encode ReadRange response for Trend Log with proper time filtering
  * @note Cette fonction remplace la version buguée du BACnet Stack

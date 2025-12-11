@@ -858,7 +858,7 @@ static object_functions_t My_Object_Table[] = {
       Trend_Log_Index_To_Instance,
       Trend_Log_Valid_Instance,
       Trend_Log_Object_Name,
-      Trend_Log_Read_Property,
+      Trend_Log_Read_Property_Override,
       Trend_Log_Write_Property,
       Trend_Log_Property_Lists,
       TrendLogGetRRInfo,
