@@ -55,4 +55,11 @@ bool Trendlog_Test_Source_Read(uint32_t instance);
 
 int rr_trend_log_encode(uint8_t *apdu, BACNET_READ_RANGE_DATA *pRequest);
 
+/**
+ * @brief Override de Trend_Log_Read_Property pour gérer LOG_BUFFER array_index
+ * @param rpdata Structure de données de lecture de propriété
+ * @return Longueur des données encodées, ou BACNET_STATUS_ERROR en cas d'erreur
+ */
+int Trend_Log_Read_Property_Override(BACNET_READ_PROPERTY_DATA *rpdata);
+
 #endif /* TRENDLOG_OVERRIDE_H */
