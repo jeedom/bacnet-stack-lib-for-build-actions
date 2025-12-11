@@ -291,10 +291,15 @@ int Trend_Log_Read_Property_Override(BACNET_READ_PROPERTY_DATA *rpdata)
     
     /* === GESTION SPÉCIALE POUR LOG_BUFFER === */
     if (rpdata->object_property == PROP_LOG_BUFFER) {
-        if (rpdata->array_index == 0) {
-            /* array_index = 0 (BACNET_ARRAY_ALL) signifie "donne-moi la taille du tableau" */
-            printf("[READ_PROPERTY] TL[%u]: LOG_BUFFER array_index=0 → returning size %u\n",
-                   rpdata->object_instance, CurrentLog->ulRecordCount);
+        /* En BACnet, array_index peut être :
+         * - 0 (BACNET_ARRAY_ALL) : retourne la taille du tableau
+         * - 0xFFFFFFFF (-1 en signed, BACNET_ARRAY_ALL en certaines implémentations) : pareil
+         * - Autres valeurs : lecture d'un élément spécifique (utiliser ReadRange)
+         */
+        if (rpdata->array_index == 0 || rpdata->array_index == BACNET_ARRAY_ALL) {
+            /* Retourner la taille du tableau */
+            printf("[READ_PROPERTY] TL[%u]: LOG_BUFFER array_index=%u → returning size %u\n",
+                   rpdata->object_instance, rpdata->array_index, CurrentLog->ulRecordCount);
             apdu_len = encode_application_unsigned(&apdu[0], CurrentLog->ulRecordCount);
             return apdu_len;
         } else {
