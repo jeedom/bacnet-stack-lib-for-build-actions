@@ -962,8 +962,7 @@ void TL_Local_Time_To_BAC(BACNET_DATE_TIME *bdatetime, bacnet_time_t seconds)
     time_info = gmtime(&raw_time);
     
     if (time_info) {
-        /* FIX: tm_year is years since 1900, so we need to add 1900 */
-        bdatetime->date.year = (uint16_t)(time_info->tm_year + 1900);
+        bdatetime->date.year = (uint16_t)time_info->tm_year;
         
 
         bdatetime->date.month = (uint8_t)(time_info->tm_mon + 1);
