@@ -312,12 +312,6 @@ int rr_trend_log_encode(
         return iLen;
     }
     
-    /* === Fonction helper pour convertir index logique -> buffer index === */
-    #define LOGICAL_TO_BUFFER_INDEX(logical_idx) \
-        ((info->ulRecordCount < TL_MAX_ENTRIES) ? \
-            (logical_idx) : \
-            ((info->iIndex - info->ulRecordCount + (logical_idx) + TL_MAX_ENTRIES) % TL_MAX_ENTRIES))
-    
     /* === Déterminer la plage selon le type de requête === */
     switch (pRequest->RequestType) {
         case RR_BY_POSITION:
@@ -353,7 +347,6 @@ int rr_trend_log_encode(
             break;
             
         case RR_BY_TIME:
-            /* === CORRECTION DU BUG === */
             {
                 time_t ref_time;
                 bacnet_time_t ref_seconds;
@@ -378,8 +371,15 @@ int rr_trend_log_encode(
                     
                     /* Parcourir de la fin vers le début */
                     for (i = (int32_t)info->ulRecordCount - 1; i >= 0; i--) {
-                        /* ===  CONVERTIR INDEX LOGIQUE → BUFFER === */
-                        buffer_idx = LOGICAL_TO_BUFFER_INDEX(i);
+                        /* Calculer l'index buffer CORRECTEMENT */
+                        if (info->ulRecordCount < TL_MAX_ENTRIES) {
+                            /* Buffer pas encore plein - index direct */
+                            buffer_idx = i;
+                        } else {
+                            /* Buffer circulaire plein */
+                            buffer_idx = (info->iIndex - info->ulRecordCount + i + TL_MAX_ENTRIES) % TL_MAX_ENTRIES;
+                        }
+                        
                         rec = Trend_Log_Get_Record(instance, buffer_idx);
                         if (!rec) continue;
                         
@@ -408,8 +408,15 @@ int rr_trend_log_encode(
                     
                     /* Parcourir du début vers la fin */
                     for (i = 0; i < (int32_t)info->ulRecordCount; i++) {
-                        /* ===  CONVERTIR INDEX LOGIQUE → BUFFER === */
-                        buffer_idx = LOGICAL_TO_BUFFER_INDEX(i);
+                        /* Calculer l'index buffer CORRECTEMENT */
+                        if (info->ulRecordCount < TL_MAX_ENTRIES) {
+                            /* Buffer pas encore plein - index direct */
+                            buffer_idx = i;
+                        } else {
+                            /* Buffer circulaire plein */
+                            buffer_idx = (info->iIndex - info->ulRecordCount + i + TL_MAX_ENTRIES) % TL_MAX_ENTRIES;
+                        }
+                        
                         rec = Trend_Log_Get_Record(instance, buffer_idx);
                         if (!rec) continue;
                         
@@ -530,8 +537,23 @@ int rr_trend_log_encode(
     for (i = 0; i < count; i++) {
         j = log_index + i;
         
-        /* ===  CONVERTIR INDEX LOGIQUE → BUFFER === */
-        int buffer_idx = LOGICAL_TO_BUFFER_INDEX(j);
+        /* ═══ CALCUL CORRECT DE L'INDEX BUFFER ═══ */
+        int buffer_idx;
+        if (info->ulRecordCount < TL_MAX_ENTRIES) {
+            /* Buffer pas encore plein - index direct */
+            buffer_idx = j;
+        } else {
+            /* Buffer circulaire plein */
+            buffer_idx = (info->iIndex - info->ulRecordCount + j + TL_MAX_ENTRIES) % TL_MAX_ENTRIES;
+        }
+        
+        /* Vérification de sécurité */
+        if (buffer_idx < 0 || buffer_idx >= TL_MAX_ENTRIES) {
+            printf("[READRANGE] TL[%u]: ERROR - buffer_idx=%d OUT OF BOUNDS (j=%d, iIndex=%d, ulRecordCount=%u)\n",
+                   instance, buffer_idx, j, info->iIndex, info->ulRecordCount);
+            continue;
+        }
+        
         rec = Trend_Log_Get_Record(instance, buffer_idx);
         
         if (!rec) {
