@@ -959,10 +959,15 @@ void TL_Local_Time_To_BAC(BACNET_DATE_TIME *bdatetime, bacnet_time_t seconds)
     struct tm *time_info;
     time_t raw_time = (time_t)seconds;
     
-    time_info = gmtime(&raw_time);
+    /* CRITICAL FIX: Use localtime() instead of gmtime() because:
+     * - Timestamps are stored using time() which returns local time
+     * - gmtime() interprets them as UTC causing timezone offset
+     * - localtime() correctly interprets them in the local timezone
+     */
+    time_info = localtime(&raw_time);
     
     if (time_info) {
-        /* FIX: tm_year is years since 1900, so we need to add 1900 */
+        /* CRITICAL FIX: tm_year is years since 1900, must add 1900 */
         bdatetime->date.year = (uint16_t)(time_info->tm_year + 1900);
         
 
